@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS players (
     heat         INTEGER NOT NULL DEFAULT 0,
     kills        INTEGER NOT NULL DEFAULT 0,
     deaths       INTEGER NOT NULL DEFAULT 0,
+    elo          INTEGER NOT NULL DEFAULT 1000,
+    duel_wins    INTEGER NOT NULL DEFAULT 0,
+    duel_losses  INTEGER NOT NULL DEFAULT 0,
+    streak       INTEGER NOT NULL DEFAULT 0,
     legacy       INTEGER NOT NULL DEFAULT 0,
     generation   INTEGER NOT NULL DEFAULT 1,
     alive        INTEGER NOT NULL DEFAULT 1,
@@ -215,6 +219,19 @@ CREATE TABLE IF NOT EXISTS logs (
     text    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS duels (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL,
+    a_id       INTEGER NOT NULL,
+    b_id       INTEGER NOT NULL,
+    stake      INTEGER NOT NULL DEFAULT 0,
+    winner_id  INTEGER,
+    rounds     INTEGER NOT NULL DEFAULT 0,
+    reason     TEXT NOT NULL DEFAULT '',
+    elo_delta  INTEGER NOT NULL DEFAULT 0,
+    at         INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mutes (
     user_id  INTEGER PRIMARY KEY,
     until    INTEGER NOT NULL,
@@ -233,6 +250,32 @@ class Database:
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
         await self.conn.commit()
+        await self.migrate()
+
+    async def migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        CREATE TABLE IF NOT EXISTS never alters an existing table, so every
+        new player column must be listed here or old deployments break.
+        """
+        wanted = {
+            "players": {
+                "elo": "INTEGER NOT NULL DEFAULT 1000",
+                "duel_wins": "INTEGER NOT NULL DEFAULT 0",
+                "duel_losses": "INTEGER NOT NULL DEFAULT 0",
+                "streak": "INTEGER NOT NULL DEFAULT 0",
+                "legacy": "INTEGER NOT NULL DEFAULT 0",
+                "generation": "INTEGER NOT NULL DEFAULT 1",
+            },
+        }
+        for table, cols in wanted.items():
+            rows = await self.fetchall(f"PRAGMA table_info({table})")
+            have = {r["name"] for r in rows}
+            if not have:
+                continue
+            for name, ddl in cols.items():
+                if name not in have:
+                    await self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     async def close(self) -> None:
         if self.conn:

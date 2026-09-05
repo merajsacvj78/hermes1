@@ -40,7 +40,7 @@ HELP = card("📖 <b>راهنمای V-CORP: OUTBREAK</b>", [
     "🌎 <b>جهان</b>",
     "<code>/world</code> وضعیت · <code>/event</code> رویداد فعال · <code>/boss</code> · <code>/hit</code>",
     "<code>/top</code> رتبه‌بندی · <code>/log</code> لاگ اتفاقات · <code>/legends</code>",
-], "هر اقدام Cooldown دارد. آلودگی هم قدرت است هم خطر.")
+], "تازه‌واردی؟ /guide — آموزش کوتاه گام‌به‌گام.")
 
 
 async def register_chat(message: Message) -> None:
@@ -75,7 +75,7 @@ async def start(message: Message) -> None:
         ], "شروع کن: /scavenge یا /mission")
     await message.answer(text, reply_markup=kb([
         [("🧬 پروفایل", "ui:me"), ("🎯 مأموریت", "ui:missions")],
-        [("🌎 جهان", "ui:world"), ("📖 راهنما", "ui:help")],
+        [("🌎 جهان", "ui:world"), ("📚 آموزش", "gd:0")],
     ]))
 
 

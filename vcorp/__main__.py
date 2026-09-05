@@ -16,7 +16,8 @@ from . import scheduler
 from .config import config
 from .db import db
 from .game.engine import seed
-from .handlers import actions, admin, betrayal, economy, group_core, orgs, private
+from .handlers import (actions, admin, betrayal, economy, group_core, guide,
+                       orgs, private, pvp)
 from .middlewares import BanMiddleware, ChatTrackMiddleware
 
 logging.basicConfig(
@@ -31,6 +32,8 @@ GROUP_COMMANDS = [
     ("scavenge", "🔦 جست‌وجو"),
     ("mission", "🎯 مأموریت‌ها"),
     ("attack", "⚔️ حمله (ریپلای)"),
+    ("duel", "🩸 دوئل PvP (ریپلای)"),
+    ("arena", "🏆 رتبه‌بندی گودال"),
     ("power", "🦸 قدرت‌ها"),
     ("mutate", "🧬 درخت جهش"),
     ("shop", "🛒 فروشگاه"),
@@ -41,6 +44,7 @@ GROUP_COMMANDS = [
     ("world", "🌎 وضعیت جهان"),
     ("boss", "👹 تهدید بزرگ"),
     ("top", "🏆 رتبه‌بندی"),
+    ("guide", "📚 آموزش گام‌به‌گام"),
     ("help", "📖 راهنما"),
 ]
 
@@ -81,6 +85,8 @@ async def main() -> None:
     dp.include_router(economy.router)
     dp.include_router(betrayal.router)
     dp.include_router(orgs.router)
+    dp.include_router(pvp.router)
+    dp.include_router(guide.router)
 
     from .handlers import world as world_h
     dp.include_router(world_h.router)
@@ -94,6 +100,10 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        from .game.duel import abort_all
+        refunded = await abort_all()
+        if refunded:
+            log.info("refunded %s in-flight duel(s)", refunded)
         await scheduler.stop(task)
         await db.close()
         await bot.session.close()
