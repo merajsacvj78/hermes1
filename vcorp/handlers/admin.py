@@ -53,6 +53,28 @@ HELP = card("👑 <b>پنل ادمین</b>", [
 ], "دسترسی: فقط ADMIN_IDS")
 
 
+@router.message(Command("whoami", "myid"))
+async def whoami(message: Message) -> None:
+    """Report the caller's numeric id so ADMIN_IDS can be filled in.
+
+    Deliberately open to everyone: a user id is not a secret, and the
+    operator needs it before any admin access exists at all.
+    """
+    u = message.from_user
+    status = "✅ ادمین هستی" if is_admin(u.id) else "🚫 ادمین نیستی"
+    await message.reply(card("🪪 <b>شناسه تو</b>", [
+        f"👤 {u.full_name}",
+        f"🆔 <code>{u.id}</code>",
+        f"💬 این چت: <code>{message.chat.id}</code>",
+        "",
+        status,
+        "",
+        "برای دسترسی ادمین، این عدد را در <code>.env</code> بگذار:",
+        f"<code>ADMIN_IDS={u.id}</code>",
+        "سپس ربات را ری‌استارت کن.",
+    ], "شناسه عددی محرمانه نیست."))
+
+
 @router.message(Command("admin", "panel"))
 async def panel(message: Message) -> None:
     if not is_admin(message.from_user.id):

@@ -12,7 +12,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from .. import anim
+from .. import anim, channel, secret
 from ..db import db
 from ..game import engine as E
 from ..game import lockdown as L
@@ -247,9 +247,11 @@ async def begin(bot: Bot, g: L.Lockdown) -> None:
     L.start(g)
     await db.log("lockdown", f"شروع با {len(g.players)} نفر", None, g.chat_id)
 
-    # deal roles privately; anyone unreachable is a real problem, so say so
-    unreachable = []
+    # Deal roles privately. Ephemeral messages land in the group but are
+    # visible only to their owner, so players no longer need to have DMed
+    # the bot first; DM is the fallback.
     carriers = g.carriers()
+    parcels: list[tuple[int, str, object]] = []
     for p in g.players.values():
         icon, label, desc = L.ROLE_META[p.role]
         lines = [f"{icon} نقش تو: <b>{label}</b>", f"<i>{desc}</i>"]
@@ -263,18 +265,17 @@ async def begin(bot: Bot, g: L.Lockdown) -> None:
             lines.append("شب‌ها از یک نفر محافظت کن. دو شب پیاپی یک نفر ممنوع.")
         else:
             lines.append("اقدام شبانه نداری. اما رأی و حرفت وزن دارد.")
-        try:
-            await bot.send_message(p.user_id, card("☣️ <b>پرونده محرمانه</b>", lines,
-                                                   f"گروه: {g.chat_id}"))
-        except Exception:  # noqa: BLE001
-            unreachable.append(p.name)
+        parcels.append((p.user_id,
+                        card("☣️ <b>پرونده محرمانه</b>", lines), None))
 
-    if unreachable:
+    routes = await secret.deliver_many(bot, g.chat_id, parcels)
+    missed = [g.players[uid].name for uid in secret.unreachable(routes)]
+    if missed:
         await bot.send_message(g.chat_id, card("⚠️ <b>هشدار</b>", [
-            "این افراد ربات را در PV استارت نکرده‌اند و نقششان را ندیدند:",
-            ", ".join(unreachable),
+            "نقش این افراد قابل تحویل نبود:",
+            ", ".join(missed),
             "",
-            "برای دورهای بعد، اول به ربات پیام خصوصی بدهید.",
+            "یک‌بار به ربات پیام خصوصی بدهید تا این مشکل تکرار نشود.",
         ]))
     await enter_night(bot, g, first=True)
 
@@ -295,12 +296,9 @@ async def enter_night(bot: Bot, g: L.Lockdown, first: bool = False) -> None:
             L.Role.SCREENER: "🔬 خون چه کسی را تست می‌کنی؟",
             L.Role.ENFORCER: "🪖 از چه کسی محافظت می‌کنی؟",
         }[p.role]
-        try:
-            await bot.send_message(p.user_id, card(f"{icon} <b>شب {g.round}</b>",
-                                                   [prompt]),
-                                   reply_markup=action_kb(g, p))
-        except Exception:  # noqa: BLE001
-            pass
+        await secret.deliver(bot, g.chat_id, p.user_id,
+                             card(f"{icon} <b>شب {g.round}</b>", [prompt]),
+                             action_kb(g, p))
     g._task = asyncio.create_task(night_timer(bot, g, g.round))
 
 
@@ -380,12 +378,10 @@ async def close_night(bot: Bot, g: L.Lockdown) -> None:
         sid, tname, is_carrier = screening
         verdict = ("🦠 <b>مثبت</b> — او حامل است." if is_carrier
                    else "✅ <b>منفی</b> — خون او پاک است.")
-        try:
-            await bot.send_message(sid, card("🔬 <b>نتیجه غربالگری</b>", [
-                f"نمونه: <b>{tname}</b>", "", verdict,
-            ], "این را بگو یا نگه‌دار — به خودت بستگی دارد."))
-        except Exception:  # noqa: BLE001
-            pass
+        await secret.deliver(bot, g.chat_id, sid,
+                             card("🔬 <b>نتیجه غربالگری</b>", [
+                                 f"نمونه: <b>{tname}</b>", "", verdict,
+                             ], "این را بگو یا نگه‌دار — به خودت بستگی دارد."))
     g.screen_pick.clear()
 
     if L.check_win(g):
@@ -478,6 +474,14 @@ async def finish(bot: Bot, g: L.Lockdown) -> None:
     await bot.send_message(g.chat_id, card("☣️ <b>پایان قرنطینه</b>", lines,
                                            "دور بعد: /lockdown"))
     await db.log("lockdown", f"پایان — برنده {g.winner}", None, g.chat_id)
+    if channel.configured():
+        chat = await db.fetchone("SELECT title FROM chats WHERE chat_id=?",
+                                 (g.chat_id,))
+        await channel.round_ended(
+            bot, "lockdown", chat["title"] if chat else "یک گروه",
+            "قرنطینه به پایان رسید",
+            f"{'🦠 حامل‌ها بردند' if g.winner == 'carriers' else '🪖 تأسیسات نجات یافت'}"
+            f" — {len(g.players)} بازیکن، {g.round} دور")
     _release(g)
 
 

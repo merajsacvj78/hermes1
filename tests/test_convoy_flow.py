@@ -20,15 +20,27 @@ class FakeBot:
     def __init__(self):
         self.group: list[str] = []
         self.dms: dict[int, list[str]] = {}
+        # whatever reached exactly one player, by whichever route
+        self.secrets: dict[int, list[str]] = {}
         self.blocked: set[int] = set()
 
-    async def send_message(self, chat_id, text, **kw):
+    async def send_message(self, chat_id, text,
+                           ephemeral_message_parameters=None, **kw):
+        # An ephemeral message is posted to the group but is visible only to
+        # one user, so it counts as private delivery, not a group post.
+        if ephemeral_message_parameters is not None:
+            uid = ephemeral_message_parameters.receiver_user_id
+            if uid in self.blocked:
+                raise RuntimeError("ephemeral undeliverable")
+            self.secrets.setdefault(uid, []).append(text)
+            return types.SimpleNamespace(message_id=99)
         if chat_id == CHAT:
             self.group.append(text)
         else:
             if chat_id in self.blocked:
-                raise RuntimeError("blocked")
+                raise RuntimeError("bot was blocked by the user")
             self.dms.setdefault(chat_id, []).append(text)
+            self.secrets.setdefault(chat_id, []).append(text)
         return types.SimpleNamespace(message_id=len(self.group) + 1)
 
     async def edit_message_text(self, **kw):
@@ -129,7 +141,7 @@ async def main() -> None:
     H._cancel(g)
     assert g.phase is C.Phase.STATION and g.leg == 1
     for uid in (1, 2, 3, 5):
-        assert bot.dms.get(uid), f"crew {uid} never got a prompt"
+        assert bot.secrets.get(uid), f"crew {uid} never got a prompt"
 
     # ── picking a post ───────────────────────────────────────────────────
     c = CB(U(999, "ghost"), f"cv:s:{CHAT}:repair", bot)

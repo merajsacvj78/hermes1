@@ -10,7 +10,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeAllGroupChats
 
 from . import scheduler
 from .config import config
@@ -26,30 +25,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("vcorp")
 
-GROUP_COMMANDS = [
-    ("start", "☣️ ورود به جهان"),
-    ("me", "🧬 پروفایل"),
-    ("scavenge", "🔦 جست‌وجو"),
-    ("mission", "🎯 مأموریت‌ها"),
-    ("attack", "⚔️ حمله (ریپلای)"),
-    ("duel", "🩸 دوئل PvP (ریپلای)"),
-    ("arena", "🏆 رتبه‌بندی گودال"),
-    ("lockdown", "☣️ پروتکل قرنطینه (گروهی)"),
-    ("convoy", "🚚 کاروان — فرار گروهی"),
-    ("modes", "🎮 حالت‌های گروهی"),
-    ("power", "🦸 قدرت‌ها"),
-    ("mutate", "🧬 درخت جهش"),
-    ("shop", "🛒 فروشگاه"),
-    ("black", "🕳️ بازار سیاه"),
-    ("contract", "🎯 قرارداد مخفی"),
-    ("wanted", "🚨 تحت تعقیب"),
-    ("orgs", "🏢 سازمان‌ها"),
-    ("world", "🌎 وضعیت جهان"),
-    ("boss", "👹 تهدید بزرگ"),
-    ("top", "🏆 رتبه‌بندی"),
-    ("guide", "📚 آموزش گام‌به‌گام"),
-    ("help", "📖 راهنما"),
-]
 
 
 async def main() -> None:
@@ -96,9 +71,11 @@ async def main() -> None:
     from .handlers import world as world_h
     dp.include_router(world_h.router)
 
-    await bot.set_my_commands(
-        [BotCommand(command=c, description=d) for c, d in GROUP_COMMANDS],
-        scope=BotCommandScopeAllGroupChats())
+    # The bot configures its own name, description, commands, menu button
+    # and requested admin rights, so a fresh deployment needs no BotFather
+    # steps beyond creating the token.
+    from . import branding
+    await branding.apply(bot)
 
     task = scheduler.start(bot)
     try:

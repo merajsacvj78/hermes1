@@ -29,6 +29,8 @@ async def handle(req):
                   "sendAnimation", "sendSticker", "copyMessage",
                   "sendPhoto", "editMessageCaption"):
         return ok(MSG)
+    if method == "getMyName":
+        return ok({"name": "V-CORP: OUTBREAK"})
     return ok(True)          # setMyCommands, deleteWebhook, ... -> true
 
 

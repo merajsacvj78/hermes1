@@ -20,15 +20,27 @@ class FakeBot:
     def __init__(self):
         self.group: list[str] = []
         self.dms: dict[int, list[str]] = {}
+        # whatever reached exactly one player, by whichever route
+        self.secrets: dict[int, list[str]] = {}
         self.blocked: set[int] = set()
 
-    async def send_message(self, chat_id, text, **kw):
+    async def send_message(self, chat_id, text,
+                           ephemeral_message_parameters=None, **kw):
+        # An ephemeral message is posted to the group but is visible only to
+        # one user, so it counts as private delivery, not a group post.
+        if ephemeral_message_parameters is not None:
+            # ephemeral reaches anyone in the chat, including users who
+            # never opened a private conversation with the bot
+            uid = ephemeral_message_parameters.receiver_user_id
+            self.secrets.setdefault(uid, []).append(text)
+            return types.SimpleNamespace(message_id=99)
         if chat_id == CHAT:
             self.group.append(text)
         else:
             if chat_id in self.blocked:
                 raise RuntimeError("bot was blocked by the user")
             self.dms.setdefault(chat_id, []).append(text)
+            self.secrets.setdefault(chat_id, []).append(text)
         return types.SimpleNamespace(message_id=len(self.group) + 1)
 
     async def edit_message_text(self, **kw):
@@ -123,26 +135,59 @@ async def main() -> None:
     assert "میزبان" in c.alerts[-1]
 
     # ── roles are dealt privately, never in the group ─────────────────────
-    bot.blocked.add(5)          # this player never started the bot in PV
+    # Player 5 has never DMed the bot. With ephemeral delivery that no
+    # longer matters, which is the whole point of the upgrade.
+    bot.blocked.add(5)
+    from vcorp import secret as _secret
+    _secret.reset_cache()
     await H.begin(bot, g)
     assert g.phase is L.Phase.NIGHT and g.round == 1
     for uid in (1, 2, 3, 4):
-        assert bot.dms.get(uid), f"player {uid} got no role DM"
+        assert bot.secrets.get(uid), f"player {uid} got no role"
     group_text = "\n".join(bot.group)
     for p in g.players.values():
         icon, label, _ = L.ROLE_META[p.role]
         assert f"نقش تو: <b>{label}</b>" not in group_text, "role leaked to group"
-    assert any("هشدار" in t and "P5" in t for t in bot.group), \
-        "unreachable players must be reported"
+    # ephemeral is tried first, so a player who never opened a DM still
+    # receives their role and no warning is needed
+    assert bot.secrets.get(5), "ephemeral delivery must reach a non-DM player"
+    assert not any("هشدار" in t for t in bot.group), \
+        "nobody should be unreachable when ephemeral works"
+    assert not bot.dms, "ephemeral must be preferred over DM"
+
+    # …and when ephemeral is unavailable the bot falls back to DM and names
+    # whoever is still unreachable
+    fallback = FakeBot()
+    fallback.blocked.add(5)
+
+    async def no_ephemeral(chat_id, text, ephemeral_message_parameters=None, **kw):
+        if ephemeral_message_parameters is not None:
+            raise RuntimeError("ephemeral not supported")
+        return await FakeBot.send_message(fallback, chat_id, text, None, **kw)
+
+    fallback.send_message = no_ephemeral
+    _secret.reset_cache()
+    g2 = L.Lockdown(chat_id=CHAT, host_id=1)
+    for u in users[:5]:
+        g2.add(u.id, u.full_name)
+    H._register(g2)
+    await H.begin(fallback, g2)
+    H._cancel(g2)
+    assert fallback.dms, "must fall back to DM"
+    assert any("هشدار" in t and "P5" in t for t in fallback.group), \
+        "an unreachable player must be named"
+    H._release(g2)
+    _secret.reset_cache()
+    H._register(g)          # the fallback probe used the same chat id
     H._cancel(g)
 
     # carriers learn their team mates, others do not
     for p in g.carriers():
-        if p.user_id in bot.dms:
-            assert "هم‌تیمی" in "\n".join(bot.dms[p.user_id])
+        if p.user_id in bot.secrets:
+            assert "هم‌تیمی" in "\n".join(bot.secrets[p.user_id])
     for p in g.players.values():
         if p.role is L.Role.SURVIVOR and p.user_id in bot.dms:
-            assert "هم‌تیمی" not in "\n".join(bot.dms[p.user_id])
+            assert "هم‌تیمی" not in "\n".join(bot.secrets[p.user_id])
 
     # ── night actions are validated ───────────────────────────────────────
     carrier = g.carriers()[0]
@@ -176,10 +221,10 @@ async def main() -> None:
             target = g.carriers()[0]
             ok, _ = L.set_screen(g, scr.user_id, target.user_id)
             assert ok
-            before = len(bot.dms.get(scr.user_id, []))
+            before = len(bot.secrets.get(scr.user_id, []))
             await H.close_night(bot, g)
             H._cancel(g)
-            after = bot.dms.get(scr.user_id, [])
+            after = bot.secrets.get(scr.user_id, [])
             assert len(after) > before
             assert "مثبت" in after[-1], "a carrier must test positive"
             # and the group never saw it

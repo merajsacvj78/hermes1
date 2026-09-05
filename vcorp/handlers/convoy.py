@@ -12,7 +12,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from .. import anim
+from .. import anim, channel, secret
 from ..db import db
 from ..game import convoy as C
 from ..game import engine as E
@@ -259,16 +259,15 @@ async def enter_stations(bot: Bot, g: C.Convoy) -> None:
     g.deadline = time.time() + C.STATION_SECONDS
     sent = await bot.send_message(g.chat_id, station_card(g))
     g.message_id = sent.message_id
-    for p in g.players.values():
-        try:
-            await bot.send_message(p.user_id, card(
-                f"🎒 <b>مرحله {g.leg}</b>",
-                ["کدام پست را می‌گیری؟", "",
-                 *[f"{i} <b>{l}</b> — {d}"
-                   for i, l, d in (C.STATION_META[s] for s in C.Station)]]),
-                reply_markup=station_kb(g))
-        except Exception:  # noqa: BLE001
-            pass
+    prompt = card(
+        f"🎒 <b>مرحله {g.leg}</b>",
+        ["کدام پست را می‌گیری؟", "",
+         *[f"{i} <b>{l}</b> — {d}"
+           for i, l, d in (C.STATION_META[s] for s in C.Station)]])
+    # posts stay hidden so nobody can free-ride on someone else's pick
+    await secret.deliver_many(
+        bot, g.chat_id,
+        [(p.user_id, prompt, station_kb(g)) for p in g.players.values()])
     g._task = asyncio.create_task(_station_timer(bot, g, g.leg))
 
 
@@ -397,6 +396,13 @@ async def finish(bot: Bot, g: C.Convoy) -> None:
     await anim.big_emoji(bot, g.chat_id, "🏁" if escaped else "💀")
     await bot.send_message(g.chat_id, card(title, lines, "دوباره: /convoy"))
     await db.log("convoy", f"پایان — {g.winner}", None, g.chat_id)
+    if channel.configured():
+        chat = await db.fetchone("SELECT title FROM chats WHERE chat_id=?",
+                                 (g.chat_id,))
+        await channel.round_ended(
+            bot, "convoy", chat["title"] if chat else "یک گروه",
+            "کاروان رسید" if escaped else "کاروان از دست رفت",
+            f"{g.cause} — {len(g.players)} خدمه، {g.leg - 1} مرحله")
     _release(g)
 
 

@@ -9,7 +9,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from .. import anim, notify
+from .. import anim, channel, notify
 from ..db import db
 from ..game import bestiary as B
 from ..game import engine as E
@@ -316,6 +316,15 @@ async def _hit(chat_id: int, user, answer, bot=None) -> None:
         await db.log("boss", f"{b['name']} کشته شد", None, chat_id)
         if bot:
             await anim.big_emoji(bot, chat_id, "🏆")
+            # a fallen world boss is exactly the kind of rare, group-wide
+            # moment the channel exists for
+            if rows and channel.configured():
+                chat = await db.fetchone(
+                    "SELECT title FROM chats WHERE chat_id=?", (chat_id,))
+                await channel.boss_defeated(
+                    bot, b["name"], (chat["title"] if chat else "یک گروه"),
+                    rows[0]["name"], rows[0]["damage"], b["reward"],
+                    art=kind.art)
     await answer(card("👹 <b>تهدید بزرگ</b>", lines, "Cooldown 7 دقیقه"))
     if bot:
         await refresh_boss_card(bot, b["id"],
