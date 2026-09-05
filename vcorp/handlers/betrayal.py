@@ -1,10 +1,11 @@
 """Secret contracts, wanted bounties, betrayal mechanics."""
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from .. import notify
 from ..db import db
 from ..game import engine as E
 from ..ui import card, mention, money
@@ -15,7 +16,7 @@ router.message.filter(GROUP)
 
 
 @router.message(Command("contract"))
-async def contract(message: Message) -> None:
+async def contract(message: Message, bot: Bot) -> None:
     parts = message.text.split()
     p = await E.ensure_player(message.from_user.id, message.from_user.full_name)
     target, amount = None, 0
@@ -53,6 +54,8 @@ async def contract(message: Message) -> None:
         "",
         "هرکس هدف را از پا دربیاورد، پاداش را می‌گیرد.",
     ], "اعضای یک تیم هم می‌توانند مجری باشند."))
+    # the target is warned, but never learns who paid
+    await notify.hunted(bot, target["user_id"], amount)
 
 
 @router.message(Command("contracts"))
@@ -87,7 +90,7 @@ async def wanted(message: Message) -> None:
 
 
 @router.message(Command("betray"))
-async def betray(message: Message) -> None:
+async def betray(message: Message, bot: Bot) -> None:
     """Sell out your organization for cash and reputation damage."""
     p = await E.ensure_player(message.from_user.id, message.from_user.full_name)
     if not p["org_id"]:
@@ -110,6 +113,7 @@ async def betray(message: Message) -> None:
          f"اسناد داخلی {org['name']} — منبع: عضو سابق", payout, E.NOW()))
     await db.log("betray", f"{p['name']} به {org['name']} خیانت کرد", p["user_id"],
                  message.chat.id)
+    await notify.betrayed_all(bot, org["org_id"], p["name"], org["name"])
     await message.answer(card("🗡️ <b>خیانت</b>", [
         f"{mention(p['user_id'], p['name'])} اسناد <b>{org['name']}</b> را فروخت.",
         f"💵 دریافتی: <b>{money(payout)}</b> · 🔥 Heat +10",

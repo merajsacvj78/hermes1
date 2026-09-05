@@ -33,11 +33,11 @@ async def tick_once(bot: Bot) -> None:
     if threat >= 30:
         await db.execute(
             "UPDATE players SET infection=MIN(100, infection+1) WHERE infection>0")
-        for r in await db.fetchall("SELECT user_id, infection FROM players WHERE infection>0"):
-            await E.apply_infection(r["user_id"], 0)
+        await E.resync_stages()
     cure = int(await db.world_get("cure_progress", 0))
     if cure >= 100:
         await db.execute("UPDATE players SET infection=MAX(0, infection-15)")
+        await E.resync_stages()
         await db.world_set("cure_progress", 0)
         await db.world_set("threat", max(0, threat - 25))
         await broadcast(bot, card("🔬 <b>درمان منتشر شد</b>", [

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import random
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from .. import anim, notify
 from ..db import db
 from ..game import engine as E
 from ..game.content import ITEMS, MUTATIONS, PATHS
@@ -29,6 +30,21 @@ FIND_TEXTS = [
 ]
 
 
+def apply_dart(res: dict, dart: int, eff: dict) -> dict:
+    """The 🎯 animation the group just watched overrides the hidden roll.
+
+    dart 6 = bullseye → guaranteed critical hit
+    dart 1 = off the board → guaranteed miss
+    2..5   = the normal stat-based result stands
+    """
+    if dart >= 6:
+        dmg = res["damage"] if res["hit"] else max(3, eff["attack"] // 2)
+        return {"hit": True, "damage": int(dmg * 1.4), "crit": True, "roll": 20}
+    if dart <= 1:
+        return {"hit": False, "damage": 0, "crit": False, "roll": 1}
+    return res
+
+
 async def guard(message: Message, key: str, cd: int, energy: int = 0):
     u = message.from_user
     p = await E.ensure_player(u.id, u.full_name)
@@ -47,14 +63,16 @@ async def guard(message: Message, key: str, cd: int, energy: int = 0):
 
 # ── scavenge ──────────────────────────────────────────────────────────────
 @router.message(Command("scavenge", "s"))
-async def scavenge(message: Message) -> None:
+async def scavenge(message: Message, bot: Bot) -> None:
     p = await guard(message, "scavenge", SCAVENGE_CD, 8)
     if not p:
         return
     await E.set_cooldown(p["user_id"], "scavenge", SCAVENGE_CD)
     await E.add(p["user_id"], energy=-8)
     lines = [random.choice(FIND_TEXTS), ""]
-    roll = random.randint(1, 100)
+    # the animated die the group sees IS the luck roll
+    die = await anim.roll(bot, message.chat.id, anim.ROLL_LUCK)
+    roll = min(100, die * 16 + random.randint(0, 15))
     cash = random.randint(80, 420) + p["level"] * 25
     await E.add(p["user_id"], money=cash)
     lines.append(f"💵 پیدا کردی: <b>{money(cash)}</b>")
@@ -79,6 +97,8 @@ async def scavenge(message: Message) -> None:
         lines.append(f"☣️ تماس آلوده! آلودگی <b>+{inf}</b> → {new}٪")
         if changed:
             lines.append(f"🩸 <b>مرحله جدید: {stage}</b>")
+            await anim.stage_animation(bot, message.chat.id, stage)
+            await notify.stage_up(bot, p["user_id"], stage, new)
     gained = await E.grant_xp(p["user_id"], 35)
     if gained:
         lines.append(f"⬆️ <b>Level Up ×{gained}</b>")
@@ -88,7 +108,7 @@ async def scavenge(message: Message) -> None:
 
 # ── combat ────────────────────────────────────────────────────────────────
 @router.message(Command("attack", "a"))
-async def attack(message: Message) -> None:
+async def attack(message: Message, bot: Bot) -> None:
     if not message.reply_to_message:
         return await message.reply("⚔️ روی پیام هدف ریپلای کن: <code>/attack</code>")
     tgt_user = message.reply_to_message.from_user
@@ -102,19 +122,23 @@ async def attack(message: Message) -> None:
         return await message.reply("❓ هدف هنوز وارد جهان نشده است.")
     await E.set_cooldown(p["user_id"], "attack", ATTACK_CD)
     await E.add(p["user_id"], energy=-12)
-    res = await E.resolve_attack(p, t)
+    # 🎯 animated dart: bullseye (6) forces a hit, a miss (1) forces a whiff
+    dart = await anim.roll(bot, message.chat.id, anim.ROLL_COMBAT)
+    res = apply_dart(await E.resolve_attack(p, t), dart, await E.effective(p))
     lines = [f"{mention(p['user_id'], p['name'])} ⚔️ {mention(t['user_id'], t['name'])}", ""]
     if not res["hit"]:
         lines.append("🌫️ ضربه خطا رفت — هدف جاخالی داد.")
         await E.grant_xp(p["user_id"], 10)
     else:
-        hp, died = await E.damage_player(t["user_id"], res["damage"])
+        hp, died = await E.damage_player(t["user_id"], res["damage"], p["user_id"])
         lines.append(("💥 <b>CRITICAL!</b> " if res["crit"] else "🎯 ") +
                      f"آسیب <b>{res['damage']}</b>")
         eff = await E.effective(t)
         if died:
             lines.append(f"💀 <b>{t['name']} از پا درآمد.</b>")
-            await E.kill_player(t["user_id"], p["user_id"])
+            fresh = await E.get_player(t["user_id"])
+            await notify.killed(bot, t["user_id"], p["name"],
+                                fresh["legacy"], fresh["generation"])
             await _settle_contracts(message, p, t)
         else:
             lines.append(f"❤️ <code>{bar(hp, eff['max_hp'])}</code> {hp}/{eff['max_hp']}")
@@ -187,7 +211,7 @@ async def power_list(message: Message) -> None:
 
 
 @router.message(Command("use"))
-async def use_power(message: Message) -> None:
+async def use_power(message: Message, bot: Bot) -> None:
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         return await message.reply("استفاده: <code>/use کد_قدرت</code> (ریپلای روی هدف)")
@@ -211,7 +235,8 @@ async def use_power(message: Message) -> None:
             return await message.reply("🎯 این قدرت هدف می‌خواهد — ریپلای کن.")
         res = await E.resolve_attack(p, target, pw)
         if res["hit"]:
-            hp, died = await E.damage_player(target["user_id"], res["damage"])
+            hp, died = await E.damage_player(target["user_id"], res["damage"],
+                                             p["user_id"])
             lines.append(f"💥 {res['damage']} آسیب به <b>{target['name']}</b>")
             if code == "hemo_drain" and target["stage"] != "bioweapon":
                 heal_amt = res["damage"] // 3
@@ -222,7 +247,9 @@ async def use_power(message: Message) -> None:
                 lines.append(f"☣️ هدف آلوده شد → {new}٪")
             if died:
                 lines.append(f"💀 <b>{target['name']} کشته شد.</b>")
-                await E.kill_player(target["user_id"], p["user_id"])
+                fresh = await E.get_player(target["user_id"])
+                await notify.killed(bot, target["user_id"], p["name"],
+                                    fresh["legacy"], fresh["generation"])
                 await _settle_contracts(message, p, target)
         else:
             lines.append(f"🛡 <b>{target['name']}</b> قدرت را دفع کرد ({pw['counter']}).")
@@ -283,7 +310,7 @@ async def cb_power(cq: CallbackQuery) -> None:
 
 # ── serum / infection management ──────────────────────────────────────────
 @router.message(Command("inject"))
-async def inject(message: Message) -> None:
+async def inject(message: Message, bot: Bot) -> None:
     p = await E.ensure_player(message.from_user.id, message.from_user.full_name)
     if not await E.take_item(p["user_id"], "vserum"):
         return await message.reply("🧬 V-SERUM نداری — <code>/black</code>")
@@ -304,6 +331,8 @@ async def inject(message: Message) -> None:
     lines.append(f"☣️ آلودگی <b>+{inf}</b> → {new}٪")
     if changed:
         lines.append(f"🩸 مرحله جدید: <b>{stage}</b>")
+        await anim.stage_animation(bot, message.chat.id, stage)
+        await notify.stage_up(bot, p["user_id"], stage, new)
     await message.reply(card("💉 <b>تزریق V-SERUM</b>", lines,
                              "هر قدرت بهایی دارد."))
 

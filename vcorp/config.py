@@ -21,6 +21,8 @@ class Config:
     bot_username: str = field(default_factory=lambda: os.getenv("BOT_USERNAME", "").lstrip("@"))
     # world tick (seconds) for the living-world engine
     tick_seconds: int = field(default_factory=lambda: int(os.getenv("TICK_SECONDS", "300")))
+    # override to use a local/self-hosted Bot API server (also used by tests)
+    api_base: str = field(default_factory=lambda: os.getenv("TELEGRAM_API_BASE", "").strip())
 
     def is_admin(self, user_id: int) -> bool:
         return user_id in self.admins

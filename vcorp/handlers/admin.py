@@ -31,6 +31,7 @@ PANEL = [
     [("🏢 Orgs", "ad:orgs"), ("⚙️ Economy", "ad:econ")],
     [("📢 Broadcast", "ad:bc"), ("📜 Logs", "ad:logs")],
     [("💾 Backup", "ad:backup"), ("🔧 SQL", "ad:sql")],
+    [("🎞 Animations", "ad:anim")],
 ]
 
 HELP = card("👑 <b>پنل ادمین</b>", [
@@ -48,6 +49,7 @@ HELP = card("👑 <b>پنل ادمین</b>", [
     "<code>/abackup</code> · <code>/arestore</code> (ریپلای روی فایل)",
     "<code>/asql &lt;کوئری&gt;</code> مدیریت مستقیم دیتابیس",
     "<code>/alogs [تعداد]</code>",
+    "<code>/aanim &lt;key&gt;</code> ثبت GIF/استیکر (ریپلای روی فایل)",
 ], "دسترسی: فقط ADMIN_IDS")
 
 
@@ -101,6 +103,7 @@ async def panel_cb(cq: CallbackQuery, bot: Bot) -> None:
         "event": "/aevent outbreak|escape|theft|revolt|collapse|globalmut|cure|orgwar",
         "bc": "/abroadcast <متن>",
         "sql": "/asql SELECT * FROM players LIMIT 5",
+        "anim": "روی GIF/استیکر ریپلای کن: /aanim outbreak|boss|death|mutation|betray",
     }
     await cq.answer(hints.get(key, "—"), show_alert=True)
 
@@ -309,7 +312,10 @@ async def aorg(message: Message) -> None:
     parts = message.text.split()
     if len(parts) < 4 or parts[2] not in ("funds", "power", "research"):
         return await message.reply("/aorg <کد> funds|power|research <عدد>")
-    await db.execute(f"UPDATE orgs SET {parts[2]}=? WHERE code=?", (int(parts[3]), parts[1]))
+    cur = await db.execute(f"UPDATE orgs SET {parts[2]}=? WHERE code=?",
+                           (int(parts[3]), parts[1]))
+    if not cur.rowcount:
+        return await message.reply("❌ سازمانی با این کد نیست.")
     await message.reply("✅ اعمال شد.")
 
 
@@ -378,6 +384,27 @@ async def arestore(message: Message, bot: Bot) -> None:
     await message.reply("✅ دیتابیس بازیابی شد.")
 
 
+@router.message(Command("aanim"))
+@admin_only
+async def aanim(message: Message) -> None:
+    """Register a GIF/sticker for a game moment: reply to the file + /aanim <key>."""
+    parts = message.text.split(maxsplit=1)
+    keys = "outbreak · boss · death · mutation · betray"
+    if len(parts) < 2:
+        return await message.reply(f"🎞 روی GIF یا استیکر ریپلای کن: /aanim <key>\n{keys}")
+    r = message.reply_to_message
+    if not r or not (r.animation or r.sticker or r.video):
+        return await message.reply("❌ باید روی یک GIF / استیکر ریپلای کنی.")
+    if r.sticker:
+        kind, fid = "sticker", r.sticker.file_id
+    elif r.animation:
+        kind, fid = "animation", r.animation.file_id
+    else:
+        kind, fid = "animation", r.video.file_id
+    await db.world_set(f"anim:{parts[1].strip()}", {"kind": kind, "id": fid})
+    await message.reply(f"🎞 انیمیشن <code>{parts[1].strip()}</code> ثبت شد ({kind}).")
+
+
 @router.message(Command("asql"))
 @admin_only
 async def asql(message: Message) -> None:
@@ -391,6 +418,10 @@ async def asql(message: Message) -> None:
             out = json.dumps([dict(r) for r in rows[:20]], ensure_ascii=False, indent=1)
             return await message.reply(f"<pre>{out[:3500]}</pre>")
         cur = await db.execute(q)
-        await message.reply(f"✅ اجرا شد · rowcount={cur.rowcount}")
+        note = ""
+        if "infection" in q.lower() and "players" in q.lower():
+            n = await E.resync_stages()
+            note = f" · stage resync: {n}"
+        await message.reply(f"✅ اجرا شد · rowcount={cur.rowcount}{note}")
     except Exception as exc:  # noqa: BLE001
         await message.reply(f"❌ خطا: <code>{exc}</code>")

@@ -7,6 +7,8 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats
 
@@ -51,7 +53,15 @@ async def main() -> None:
     await db.connect()
     await seed()
 
+    session = None
+    if config.api_base:
+        # local or self-hosted Bot API server
+        session = AiohttpSession(
+            api=TelegramAPIServer.from_base(config.api_base.rstrip("/")))
+        log.info("using Bot API server at %s", config.api_base)
+
     bot = Bot(config.token,
+              session=session,
               default=DefaultBotProperties(parse_mode=ParseMode.HTML,
                                            link_preview_is_disabled=True))
     me = await bot.get_me()

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import random
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from .. import anim
 from ..db import db
 from ..game import engine as E
 from ..game.content import BLACK_MARKET, ITEMS
@@ -29,7 +30,8 @@ async def shop_view(black: bool) -> tuple[str, list]:
         btns.append((f"{it['icon']} {money(pr)}", f"buy:{c}"))
     rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
     title = "🕳️ <b>بازار سیاه</b>" if black else "🛒 <b>فروشگاه</b>"
-    foot = "خرید غیرقانونی Heat می‌آورد." if black else "قیمت‌ها با رفتار بازیکنان تغییر می‌کند."
+    foot = ("خرید غیرقانونی Heat می‌آورد · شرط‌بندی: /deal <مبلغ>" if black
+            else "قیمت‌ها با رفتار بازیکنان تغییر می‌کند.")
     return card(title, lines, foot), rows
 
 
@@ -75,6 +77,59 @@ async def buy(cq: CallbackQuery) -> None:
         await cq.message.edit_text(text, reply_markup=kb(rows))
     except Exception:
         pass
+
+
+@router.message(Command("deal"))
+async def deal(message: Message, bot: Bot) -> None:
+    """Black-market gamble: stake cash on an unverified shipment. 🎰"""
+    p = await E.ensure_player(message.from_user.id, message.from_user.full_name)
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return await message.reply(
+            "🎰 <code>/deal &lt;مبلغ&gt;</code> — روی محموله تأییدنشده شرط ببند.\n"
+            "<i>برد: کالای کمیاب. باخت: پول و Heat.</i>")
+    stake = int(parts[1])
+    if stake < 500:
+        return await message.reply("🎰 حداقل شرط $500 است.")
+    if p["money"] < stake:
+        return await message.reply("💸 موجودی کافی نیست.")
+    left = await E.cooldown_left(p["user_id"], "deal")
+    if left:
+        return await message.reply(f"⏳ واسطه هنوز جواب نداده — {E.fmt_time(left)}")
+    await E.set_cooldown(p["user_id"], "deal", 1800)
+    await E.add(p["user_id"], money=-stake, heat=3)
+    slot = await anim.roll(bot, message.chat.id, anim.ROLL_JACKPOT)
+    lines = []
+    if slot == 64:  # triple 7 — jackpot
+        await E.give_item(p["user_id"], "cure_proto")
+        await E.give_item(p["user_id"], "vserum")
+        await E.add(p["user_id"], money=stake * 4)
+        lines += ["🎰 <b>777 — محموله کامل!</b>",
+                  f"💵 {money(stake * 4)} · 🔬 نمونه درمان · 🧬 V-SERUM"]
+    elif slot in (1, 22, 43):  # triple bar/grape/lemon
+        code = random.choice(["vsample", "vserum", "tracker"])
+        await E.give_item(p["user_id"], code)
+        await E.add(p["user_id"], money=stake)
+        lines += ["🎰 <b>سه‌تایی — معامله خوب بود.</b>",
+                  f"{ITEMS[code]['icon']} {ITEMS[code]['name']} · پول برگشت"]
+    elif slot >= 40:
+        await E.give_item(p["user_id"], "vsample")
+        lines += ["🎰 نیمه‌موفق — فقط یک نمونه خام گیرت آمد.",
+                  f"🧫 نمونه VX-13 (ارزش کمتر از {money(stake)})"]
+    else:
+        await E.add(p["user_id"], heat=5)
+        lines += ["🎰 <b>کلاه سرت رفت.</b> جعبه خالی بود.",
+                  f"💸 -{money(stake)} · 🔥 Heat +8"]
+        if random.randint(1, 100) <= 25:
+            await db.execute(
+                "INSERT INTO evidence(owner_id,about_id,kind,body,value,created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (p["user_id"], p["user_id"], "leak",
+                 f"رسید معامله ناموفق بازار سیاه — {p['name']}", stake // 2, E.NOW()))
+            lines.append("🗂️ اما رسید معامله را نگه داشتی — قابل فروش است.")
+    await db.log("deal", f"{p['name']} شرط {money(stake)} · slot={slot}", p["user_id"])
+    await message.reply(card("🕳️ <b>معامله تأییدنشده</b>", lines,
+                             "بازار سیاه ضمانت ندارد."))
 
 
 @router.message(Command("pay"))

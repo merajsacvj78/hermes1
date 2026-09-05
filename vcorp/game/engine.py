@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from ..db import db
 from . import content
-from .content import ITEMS, MUTATIONS, POWERS, STAGE_BONUS, stage_for
+from .content import ITEMS, MUTATIONS, POWERS, STAGE_BONUS, STAGES, stage_for
 
 NOW = lambda: int(time.time())  # noqa: E731
 
@@ -160,6 +160,30 @@ async def apply_infection(user_id: int, delta: int) -> tuple[int, str, bool]:
     return new, stage, changed
 
 
+async def resync_stages() -> int:
+    """Recompute `stage` for everyone after a bulk infection change.
+
+    Any query that touches `infection` in bulk (cure waves, global mutation,
+    admin edits) MUST call this, otherwise a player can sit at 0% infection
+    while still carrying Bio-Weapon stat bonuses.
+    """
+    changed = 0
+    for st, threshold, _, _ in reversed(STAGES):
+        upper = 101
+        for s2 in STAGES:
+            if s2[1] > threshold:
+                upper = min(upper, s2[1])
+        cur = await db.execute(
+            "UPDATE players SET stage=? WHERE infection>=? AND infection<? AND stage<>?",
+            (st, threshold, upper, st))
+        changed += cur.rowcount or 0
+    # a fully cured player is human again, whatever they used to be
+    await db.execute(
+        "UPDATE players SET path='survivor' "
+        "WHERE stage='human' AND path IN ('infected','mutant','bioweapon')")
+    return changed
+
+
 async def auto_mutations(user_id: int) -> list[str]:
     """Unlock available mutation nodes automatically is NOT done; returns options."""
     p = await get_player(user_id)
@@ -309,13 +333,19 @@ async def resolve_attack(att: dict, dfn: dict, power: Optional[dict] = None) -> 
     return {"hit": True, "damage": dmg, "crit": crit, "roll": roll}
 
 
-async def damage_player(user_id: int, dmg: int) -> tuple[int, bool]:
+async def damage_player(user_id: int, dmg: int,
+                        killer_id: int | None = None) -> tuple[int, bool]:
+    """Apply damage. If it is lethal, resolve the death exactly once here.
+
+    Callers must NOT call kill_player() again on a True result — doing so
+    would burn a second generation and double the victim's losses.
+    """
     p = await get_player(user_id)
     if not p:
         return 0, False
     hp = p["hp"] - dmg
     if hp <= 0:
-        await kill_player(user_id)
+        await kill_player(user_id, killer_id)
         return 0, True
     await update(user_id, hp=hp)
     return hp, False
@@ -326,7 +356,12 @@ async def kill_player(user_id: int, killer_id: int | None = None) -> None:
     p = await get_player(user_id)
     if not p:
         return
-    legacy = p["legacy"] + p["level"] * 2 + p["money"] // 5000
+    # Legacy always grows: even a rookie's death must leave the next
+    # generation something, otherwise dying early is a pure dead end.
+    earned = 1 + p["level"] * 2 + p["money"] // 5000 + p["kills"] * 3
+    earned += {"infected": 1, "mutant": 3, "advanced": 6, "bioweapon": 10}.get(
+        p["stage"], 0)
+    legacy = p["legacy"] + earned
     keep_money = p["money"] // 4
     await update(
         user_id,

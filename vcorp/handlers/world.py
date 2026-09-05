@@ -7,6 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from .. import anim, notify
 from ..db import db
 from ..game import engine as E
 from ..game.content import EVENT_TYPES, ZONES
@@ -64,9 +65,11 @@ async def spawn_event(bot: Bot, chat_id: int, code: str | None = None) -> dict:
     if code == "cure":
         await db.world_set("threat", max(0, threat - 12))
         await db.execute("UPDATE players SET infection=MAX(0,infection-8) WHERE infection>0")
+        await E.resync_stages()
     if code == "globalmut":
         await db.execute("UPDATE players SET infection=MIN(100,infection+7) "
                          "WHERE infection>0")
+        await E.resync_stages()
     if code == "collapse":
         stab = int(await db.world_get("vcorp_stability", 100))
         await db.world_set("vcorp_stability", max(0, stab - 20))
@@ -95,7 +98,7 @@ async def cb_event(cq: CallbackQuery) -> None:
 
 
 @router.message(Command("respond"))
-async def respond(message: Message) -> None:
+async def respond(message: Message, bot: Bot) -> None:
     p = await E.ensure_player(message.from_user.id, message.from_user.full_name)
     ev = await db.fetchone(
         "SELECT * FROM events WHERE status='active' ORDER BY id DESC LIMIT 1")
@@ -115,8 +118,6 @@ async def respond(message: Message) -> None:
         threat = int(await db.world_get("threat", 10))
         await db.world_set("threat", max(0, threat - 3))
         lines.append(f"✅ مداخله موفق — 💵 {money(reward)} · ☣️ تهدید جهانی -3")
-        for org in ("vcorp", "ubc", "umbra"):
-            pass
         await E.rep_add(p["user_id"], "ubc", 5)
         lines.append("📊 شهرت U.B.C +5")
     else:
@@ -127,6 +128,9 @@ async def respond(message: Message) -> None:
         lines.append(f"❌ اوضاع بدتر شد — ❤️ -{dmg} · ☣️ +{inf} → {new}٪")
         threat = int(await db.world_get("threat", 10))
         await db.world_set("threat", min(100, threat + 2))
+        if ch:
+            await anim.stage_animation(bot, message.chat.id, st)
+            await notify.stage_up(bot, p["user_id"], st, new)
         if died:
             lines.append("💀 در میدان ماندی.")
     await message.reply(card("🚨 <b>واکنش به رویداد</b>", lines,
@@ -149,12 +153,17 @@ async def boss(message: Message) -> None:
             (message.chat.id, f"{icon} {name}", hp, hp, 25 + players * 2,
              4000 + players * 900, E.NOW()))
         await db.log("boss", f"ظهور {name}", None, message.chat.id)
-        return await message.answer(card("👹 <b>تهدید بزرگ ظاهر شد</b>", [
+        await anim.big_emoji(message.bot, message.chat.id, "👹")
+        sent = await message.answer(card("👹 <b>تهدید بزرگ ظاهر شد</b>", [
             f"<b>{icon} {name}</b>",
             f"❤️ <code>{bar(hp, hp)}</code> {hp}/{hp}",
             "",
             "هیچ‌کس تنها این را نمی‌کشد.",
         ], "حمله: /hit"), reply_markup=kb([[("⚔️ حمله", "boss:hit")]]))
+        # remember the card so every hit edits this same live message
+        await db.world_set(f"bosscard:{cur.lastrowid}",
+                           {"chat": message.chat.id, "msg": sent.message_id})
+        return None
     await message.reply(card("👹 <b>تهدید فعال</b>", [
         f"<b>{b['name']}</b>",
         f"❤️ <code>{bar(b['hp'], b['max_hp'])}</code> {b['hp']}/{b['max_hp']}",
@@ -170,7 +179,31 @@ async def cb_boss_info(cq: CallbackQuery) -> None:
                     else "باس فعالی نیست. /boss", show_alert=True)
 
 
-async def _hit(chat_id: int, user, answer) -> None:
+async def refresh_boss_card(bot, boss_id: int, extra: str | None = None) -> None:
+    """Edit the original boss message in place so the group sees a live HP bar."""
+    ref = await db.world_get(f"bosscard:{boss_id}")
+    b = await db.fetchone("SELECT * FROM bosses WHERE id=?", (boss_id,))
+    if not ref or not b:
+        return
+    dead = b["status"] != "active"
+    lines = [
+        f"<b>{b['name']}</b>",
+        f"❤️ <code>{bar(b['hp'], b['max_hp'])}</code> {b['hp']}/{b['max_hp']}",
+        f"💰 جایزه کل: {money(b['reward'])}",
+    ]
+    if extra:
+        lines += ["", extra]
+    title = "☠️ <b>تهدید بزرگ — خنثی شد</b>" if dead else "👹 <b>تهدید بزرگ — فعال</b>"
+    try:
+        await bot.edit_message_text(
+            chat_id=ref["chat"], message_id=ref["msg"],
+            text=card(title, lines, "حمله: /hit" if not dead else "پرونده بسته شد."),
+            reply_markup=None if dead else kb([[("⚔️ حمله", "boss:hit")]]))
+    except Exception:  # noqa: BLE001  (message too old / not modified)
+        pass
+
+
+async def _hit(chat_id: int, user, answer, bot=None) -> None:
     p = await E.ensure_player(user.id, user.full_name)
     b = await db.fetchone(
         "SELECT * FROM bosses WHERE chat_id=? AND status='active' ORDER BY id DESC LIMIT 1",
@@ -182,7 +215,9 @@ async def _hit(chat_id: int, user, answer) -> None:
         return await answer(f"⏳ نفس تازه کن — {E.fmt_time(left)}")
     await E.set_cooldown(p["user_id"], "boss", 420)
     eff = await E.effective(p)
-    dmg = eff["attack"] * 2 + random.randint(0, 40)
+    # 🎳 the strike animation scales the blow the whole group just watched
+    pins = await anim.roll(bot, chat_id, anim.ROLL_STRIKE) if bot else 4
+    dmg = int((eff["attack"] * 2 + random.randint(0, 40)) * (0.5 + pins * 0.18))
     hp = max(0, b["hp"] - dmg)
     await db.execute("UPDATE bosses SET hp=? WHERE id=?", (hp, b["id"]))
     await db.execute(
@@ -191,7 +226,8 @@ async def _hit(chat_id: int, user, answer) -> None:
         (b["id"], p["user_id"], dmg, dmg))
     back = max(5, b["attack"] - eff["defense"] // 2 + random.randint(0, 15))
     php, died = await E.damage_player(p["user_id"], back)
-    lines = [f"⚔️ {mention(p['user_id'], p['name'])} → <b>{dmg}</b> آسیب",
+    lines = [f"⚔️ {mention(p['user_id'], p['name'])} → <b>{dmg}</b> آسیب"
+             + (" 🎳 <b>STRIKE!</b>" if pins >= 6 else ""),
              f"👹 <code>{bar(hp, b['max_hp'])}</code> {hp}/{b['max_hp']}",
              f"↩️ ضدحمله: <b>{back}</b>" + (" — 💀 کشته شدی" if died else f" (❤️ {php})")]
     if hp <= 0:
@@ -207,25 +243,32 @@ async def _hit(chat_id: int, user, answer) -> None:
             await E.add(r["user_id"], money=share)
             await E.grant_xp(r["user_id"], 150)
             lines.append(f"• {r['name']} — {r['damage']} dmg → {money(share)}")
+            if bot:
+                await notify.loot(bot, r["user_id"], b["name"], r["damage"], share)
         threat = int(await db.world_get("threat", 10))
         await db.world_set("threat", max(0, threat - 10))
         await db.log("boss", f"{b['name']} کشته شد", None, chat_id)
+        if bot:
+            await anim.big_emoji(bot, chat_id, "🏆")
     await answer(card("👹 <b>تهدید بزرگ</b>", lines, "Cooldown 7 دقیقه"))
+    if bot:
+        await refresh_boss_card(bot, b["id"],
+                                f"آخرین ضربه: {p['name']} — {dmg}")
 
 
 @router.message(Command("hit"))
-async def hit(message: Message) -> None:
+async def hit(message: Message, bot: Bot) -> None:
     async def ans(text):
         await message.reply(text)
-    await _hit(message.chat.id, message.from_user, ans)
+    await _hit(message.chat.id, message.from_user, ans, bot)
 
 
 @router.callback_query(F.data == "boss:hit")
-async def cb_hit(cq: CallbackQuery) -> None:
+async def cb_hit(cq: CallbackQuery, bot: Bot) -> None:
     async def ans(text):
         if len(text) < 190 and "\n" not in text:
             await cq.answer(text, show_alert=True)
         else:
             await cq.message.answer(text)
             await cq.answer()
-    await _hit(cq.message.chat.id, cq.from_user, ans)
+    await _hit(cq.message.chat.id, cq.from_user, ans, bot)
