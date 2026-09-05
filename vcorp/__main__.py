@@ -17,7 +17,7 @@ from .config import config
 from .db import db
 from .game.engine import seed
 from .handlers import (actions, admin, betrayal, economy, group_core, guide,
-                       orgs, private, pvp)
+                       lockdown, orgs, private, pvp)
 from .middlewares import BanMiddleware, ChatTrackMiddleware
 
 logging.basicConfig(
@@ -34,6 +34,7 @@ GROUP_COMMANDS = [
     ("attack", "⚔️ حمله (ریپلای)"),
     ("duel", "🩸 دوئل PvP (ریپلای)"),
     ("arena", "🏆 رتبه‌بندی گودال"),
+    ("lockdown", "☣️ پروتکل قرنطینه (گروهی)"),
     ("power", "🦸 قدرت‌ها"),
     ("mutate", "🧬 درخت جهش"),
     ("shop", "🛒 فروشگاه"),
@@ -87,6 +88,7 @@ async def main() -> None:
     dp.include_router(orgs.router)
     dp.include_router(pvp.router)
     dp.include_router(guide.router)
+    dp.include_router(lockdown.router)
 
     from .handlers import world as world_h
     dp.include_router(world_h.router)
@@ -101,9 +103,13 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         from .game.duel import abort_all
+        from .handlers.lockdown import abort_all as ld_abort
         refunded = await abort_all()
         if refunded:
             log.info("refunded %s in-flight duel(s)", refunded)
+        rounds = await ld_abort()
+        if rounds:
+            log.info("refunded %s open LOCKDOWN round(s)", rounds)
         await scheduler.stop(task)
         await db.close()
         await bot.session.close()

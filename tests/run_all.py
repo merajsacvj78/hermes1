@@ -7,7 +7,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITES = ["test_engine.py", "test_handlers.py", "test_world.py", "test_pvp.py",
-          "test_migration.py"]
+          "test_migration.py", "test_lockdown.py", "test_lockdown_flow.py"]
 
 
 def main() -> int:
