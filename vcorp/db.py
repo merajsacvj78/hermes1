@@ -193,7 +193,9 @@ CREATE TABLE IF NOT EXISTS bosses (
     attack   INTEGER NOT NULL DEFAULT 25,
     reward   INTEGER NOT NULL DEFAULT 5000,
     status   TEXT NOT NULL DEFAULT 'active',
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    kind     TEXT NOT NULL DEFAULT 'sector9',
+    state    TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS boss_damage (
@@ -266,6 +268,10 @@ class Database:
                 "streak": "INTEGER NOT NULL DEFAULT 0",
                 "legacy": "INTEGER NOT NULL DEFAULT 0",
                 "generation": "INTEGER NOT NULL DEFAULT 1",
+            },
+            "bosses": {
+                "kind": "TEXT NOT NULL DEFAULT 'sector9'",
+                "state": "TEXT NOT NULL DEFAULT '{}'",
             },
         }
         for table, cols in wanted.items():

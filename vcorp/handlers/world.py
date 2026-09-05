@@ -1,14 +1,17 @@
 """Living world: dynamic events, world state, world bosses."""
 from __future__ import annotations
 
+import json
+import os
 import random
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from .. import anim, notify
 from ..db import db
+from ..game import bestiary as B
 from ..game import engine as E
 from ..game.content import EVENT_TYPES, ZONES
 from ..ui import bar, card, kb, mention, money
@@ -17,10 +20,40 @@ router = Router(name="world")
 GROUP = F.chat.type.in_({"group", "supergroup"})
 router.message.filter(GROUP)
 
-BOSS_NAMES = [
-    ("👹", "سوژه ۰۴ — «آوار»"), ("🕷️", "کندوی متحرک"), ("🦠", "توده هم‌جوش"),
-    ("🧟", "دسته سکتور ۹"), ("🦾", "نمونه تیتان"),
-]
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def boss_kind(row) -> B.BossKind:
+    """The bestiary entry for a stored boss, tolerant of old rows."""
+    try:
+        return B.BY_KEY.get(row["kind"]) or B.BY_KEY["sector9"]
+    except (KeyError, IndexError, TypeError):
+        return B.BY_KEY["sector9"]
+
+
+def boss_state(row) -> dict:
+    try:
+        return json.loads(row["state"]) or {}
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {}
+
+
+async def send_portrait(bot, chat_id: int, kind: B.BossKind, caption: str,
+                        markup=None) -> int | None:
+    """Send the boss's own portrait, falling back to text if it is missing."""
+    path = os.path.join(ROOT, kind.art)
+    try:
+        if os.path.exists(path):
+            msg = await bot.send_photo(chat_id, FSInputFile(path),
+                                       caption=caption, reply_markup=markup)
+            return msg.message_id
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        msg = await bot.send_message(chat_id, caption, reply_markup=markup)
+        return msg.message_id
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @router.message(Command("world"))
@@ -144,30 +177,40 @@ async def boss(message: Message) -> None:
         "SELECT * FROM bosses WHERE chat_id=? AND status='active' ORDER BY id DESC LIMIT 1",
         (message.chat.id,))
     if not b:
-        icon, name = random.choice(BOSS_NAMES)
+        kind = B.pick()
         players = max(1, await db.scalar("SELECT COUNT(*) FROM players"))
-        hp = 600 + players * 220
+        hp, atk, reward = B.scale(kind, players)
         cur = await db.execute(
-            "INSERT INTO bosses(chat_id,name,hp,max_hp,attack,reward,status,created_at)"
-            " VALUES(?,?,?,?,?,?,'active',?)",
-            (message.chat.id, f"{icon} {name}", hp, hp, 25 + players * 2,
-             4000 + players * 900, E.NOW()))
-        await db.log("boss", f"ظهور {name}", None, message.chat.id)
-        await anim.big_emoji(message.bot, message.chat.id, "👹")
-        sent = await message.answer(card("👹 <b>تهدید بزرگ ظاهر شد</b>", [
-            f"<b>{icon} {name}</b>",
+            "INSERT INTO bosses(chat_id,name,hp,max_hp,attack,reward,status,"
+            "created_at,kind,state) VALUES(?,?,?,?,?,?,'active',?,?,?)",
+            (message.chat.id, f"{kind.icon} {kind.name}", hp, hp, atk, reward,
+             E.NOW(), kind.key, json.dumps(dict(kind.init))))
+        await db.log("boss", f"ظهور {kind.name}", None, message.chat.id)
+        caption = card("👹 <b>تهدید بزرگ ظاهر شد</b>", [
+            f"<b>{kind.icon} {kind.name}</b>",
+            f"<i>{kind.tagline}</i>",
+            "",
             f"❤️ <code>{bar(hp, hp)}</code> {hp}/{hp}",
+            f"💰 جایزه کل: {money(reward)}",
+            "",
+            kind.mechanic_hint,
             "",
             "هیچ‌کس تنها این را نمی‌کشد.",
-        ], "حمله: /hit"), reply_markup=kb([[("⚔️ حمله", "boss:hit")]]))
+        ], "حمله: /hit")
+        msg_id = await send_portrait(message.bot, message.chat.id, kind, caption,
+                                     kb([[("⚔️ حمله", "boss:hit")]]))
         # remember the card so every hit edits this same live message
         await db.world_set(f"bosscard:{cur.lastrowid}",
-                           {"chat": message.chat.id, "msg": sent.message_id})
+                           {"chat": message.chat.id, "msg": msg_id,
+                            "photo": True})
         return None
+    kind = boss_kind(b)
     await message.reply(card("👹 <b>تهدید فعال</b>", [
         f"<b>{b['name']}</b>",
         f"❤️ <code>{bar(b['hp'], b['max_hp'])}</code> {b['hp']}/{b['max_hp']}",
         f"💰 جایزه کل: {money(b['reward'])}",
+        "",
+        kind.mechanic_hint,
     ], "حمله: /hit"), reply_markup=kb([[("⚔️ حمله", "boss:hit")]]))
 
 
@@ -193,12 +236,24 @@ async def refresh_boss_card(bot, boss_id: int, extra: str | None = None) -> None
     ]
     if extra:
         lines += ["", extra]
+    kind = boss_kind(b)
+    if not dead:
+        lines += ["", kind.mechanic_hint]
     title = "☠️ <b>تهدید بزرگ — خنثی شد</b>" if dead else "👹 <b>تهدید بزرگ — فعال</b>"
+    text = card(title, lines, "حمله: /hit" if not dead else "پرونده بسته شد.")
+    markup = None if dead else kb([[("⚔️ حمله", "boss:hit")]])
+    if not ref.get("msg"):
+        return
     try:
-        await bot.edit_message_text(
-            chat_id=ref["chat"], message_id=ref["msg"],
-            text=card(title, lines, "حمله: /hit" if not dead else "پرونده بسته شد."),
-            reply_markup=None if dead else kb([[("⚔️ حمله", "boss:hit")]]))
+        # boss cards are portraits, so the caption is what has to be edited
+        if ref.get("photo"):
+            await bot.edit_message_caption(
+                chat_id=ref["chat"], message_id=ref["msg"],
+                caption=text, reply_markup=markup)
+        else:
+            await bot.edit_message_text(
+                chat_id=ref["chat"], message_id=ref["msg"],
+                text=text, reply_markup=markup)
     except Exception:  # noqa: BLE001  (message too old / not modified)
         pass
 
@@ -215,21 +270,32 @@ async def _hit(chat_id: int, user, answer, bot=None) -> None:
         return await answer(f"⏳ نفس تازه کن — {E.fmt_time(left)}")
     await E.set_cooldown(p["user_id"], "boss", 420)
     eff = await E.effective(p)
+    kind = boss_kind(b)
+    state = boss_state(b)
     # 🎳 the strike animation scales the blow the whole group just watched
     pins = await anim.roll(bot, chat_id, anim.ROLL_STRIKE) if bot else 4
-    dmg = int((eff["attack"] * 2 + random.randint(0, 40)) * (0.5 + pins * 0.18))
+    raw = int((eff["attack"] * 2 + random.randint(0, 40)) * (0.5 + pins * 0.18))
+    # the boss's own mechanic decides what that blow is actually worth
+    blow = B.strike(kind, state, raw, pins, b["hp"], b["max_hp"])
+    dmg = blow.damage
     hp = max(0, b["hp"] - dmg)
-    await db.execute("UPDATE bosses SET hp=? WHERE id=?", (hp, b["id"]))
+    if hp > 0:
+        hp = B.post_hit(kind, state, hp, b["max_hp"])
+    await db.execute("UPDATE bosses SET hp=?, state=? WHERE id=?",
+                     (hp, json.dumps(state), b["id"]))
     await db.execute(
         "INSERT INTO boss_damage(boss_id,user_id,damage) VALUES(?,?,?) "
         "ON CONFLICT(boss_id,user_id) DO UPDATE SET damage=damage+?",
         (b["id"], p["user_id"], dmg, dmg))
-    back = max(5, b["attack"] - eff["defense"] // 2 + random.randint(0, 15))
+    back = max(5, b["attack"] - eff["defense"] // 2 + random.randint(0, 15)
+               + blow.recoil)
     php, died = await E.damage_player(p["user_id"], back)
     lines = [f"⚔️ {mention(p['user_id'], p['name'])} → <b>{dmg}</b> آسیب"
              + (" 🎳 <b>STRIKE!</b>" if pins >= 6 else ""),
              f"👹 <code>{bar(hp, b['max_hp'])}</code> {hp}/{b['max_hp']}",
              f"↩️ ضدحمله: <b>{back}</b>" + (" — 💀 کشته شدی" if died else f" (❤️ {php})")]
+    if blow.note:
+        lines.insert(1, blow.note)
     if hp <= 0:
         await db.execute("UPDATE bosses SET status='dead' WHERE id=?", (b["id"],))
         rows = await db.fetchall(

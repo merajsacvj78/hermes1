@@ -16,8 +16,8 @@ from . import scheduler
 from .config import config
 from .db import db
 from .game.engine import seed
-from .handlers import (actions, admin, betrayal, economy, group_core, guide,
-                       lockdown, orgs, private, pvp)
+from .handlers import (actions, admin, betrayal, convoy, economy, group_core,
+                       guide, lockdown, orgs, private, pvp)
 from .middlewares import BanMiddleware, ChatTrackMiddleware
 
 logging.basicConfig(
@@ -35,6 +35,8 @@ GROUP_COMMANDS = [
     ("duel", "🩸 دوئل PvP (ریپلای)"),
     ("arena", "🏆 رتبه‌بندی گودال"),
     ("lockdown", "☣️ پروتکل قرنطینه (گروهی)"),
+    ("convoy", "🚚 کاروان — فرار گروهی"),
+    ("modes", "🎮 حالت‌های گروهی"),
     ("power", "🦸 قدرت‌ها"),
     ("mutate", "🧬 درخت جهش"),
     ("shop", "🛒 فروشگاه"),
@@ -89,6 +91,7 @@ async def main() -> None:
     dp.include_router(pvp.router)
     dp.include_router(guide.router)
     dp.include_router(lockdown.router)
+    dp.include_router(convoy.router)
 
     from .handlers import world as world_h
     dp.include_router(world_h.router)
@@ -110,6 +113,10 @@ async def main() -> None:
         rounds = await ld_abort()
         if rounds:
             log.info("refunded %s open LOCKDOWN round(s)", rounds)
+        from .handlers.convoy import abort_all as cv_abort
+        runs = await cv_abort()
+        if runs:
+            log.info("refunded %s convoy run(s)", runs)
         await scheduler.stop(task)
         await db.close()
         await bot.session.close()

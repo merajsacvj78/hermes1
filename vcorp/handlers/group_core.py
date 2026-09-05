@@ -40,6 +40,9 @@ HELP = card("📖 <b>راهنمای V-CORP: OUTBREAK</b>", [
     "🌎 <b>جهان</b>",
     "<code>/world</code> وضعیت · <code>/event</code> رویداد فعال · <code>/boss</code> · <code>/hit</code>",
     "<code>/top</code> رتبه‌بندی · <code>/log</code> لاگ اتفاقات · <code>/legends</code>",
+    "",
+    "🎮 <b>حالت‌های گروهی</b> — <code>/modes</code>",
+    "<code>/duel</code> گودال · <code>/lockdown</code> قرنطینه · <code>/convoy</code> کاروان",
 ], "تازه‌واردی؟ /guide — آموزش کوتاه گام‌به‌گام.")
 
 
@@ -76,12 +79,57 @@ async def start(message: Message) -> None:
     await message.answer(text, reply_markup=kb([
         [("🧬 پروفایل", "ui:me"), ("🎯 مأموریت", "ui:missions")],
         [("🌎 جهان", "ui:world"), ("📚 آموزش", "gd:0")],
+        [("🎮 حالت‌های گروهی", "ui:modes")],
     ]))
 
 
 @router.message(Command("help"))
 async def help_cmd(message: Message) -> None:
     await message.answer(HELP)
+
+
+MODES = card("🎮 <b>حالت‌های گروهی</b>", [
+    "سه بازی کامل، هرکدام برای یک نوع جمع:",
+    "",
+    "⚔️ <b>گودال</b> — <code>/duel @کسی</code>",
+    "دوئل تن‌به‌تن با حرکت مخفی و همزمان. برد با خواندن حریف است.",
+    "",
+    "☣️ <b>پروتکل قرنطینه</b> — <code>/lockdown</code>",
+    "نقش مخفی برای ۴+ نفر. حامل‌ها شب تبدیل می‌کنند، گروه روز رأی می‌دهد.",
+    "همه علیه همه‌ی نادیده‌ها.",
+    "",
+    "🚚 <b>کاروان</b> — <code>/convoy</code>",
+    "همکاری خالص برای ۳+ نفر. پست بگیرید، سرعت را رأی بدهید،",
+    "و کاروان را تا حصار برسانید. یا همه می‌رسید، یا هیچ‌کس.",
+    "",
+    "👹 <b>باس جهانی</b> — <code>/boss</code>",
+    "هر باس مکانیک و ضعف خودش را دارد. تنهایی شکست نمی‌خورد.",
+], "آموزش کامل: /guide")
+
+
+@router.message(Command("modes"))
+async def modes_cmd(message: Message) -> None:
+    await message.answer(MODES, reply_markup=kb([
+        [("☣️ قرنطینه", "ui:go:lockdown"), ("🚚 کاروان", "ui:go:convoy")],
+        [("📚 آموزش کامل", "gd:0")],
+    ]))
+
+
+@router.callback_query(F.data == "ui:modes")
+async def cb_modes(cq: CallbackQuery) -> None:
+    await cq.message.answer(MODES, reply_markup=kb([
+        [("☣️ قرنطینه", "ui:go:lockdown"), ("🚚 کاروان", "ui:go:convoy")],
+        [("📚 آموزش کامل", "gd:0")],
+    ]))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("ui:go:"))
+async def cb_go(cq: CallbackQuery) -> None:
+    """Point at the command rather than starting a round on someone's behalf."""
+    which = cq.data.rsplit(":", 1)[1]
+    cmd = "/lockdown" if which == "lockdown" else "/convoy"
+    await cq.answer(f"برای شروع، {cmd} را بفرست.", show_alert=True)
 
 
 async def profile_text(user_id: int) -> str:

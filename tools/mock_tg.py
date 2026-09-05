@@ -26,7 +26,8 @@ async def handle(req):
     if method == "sendDice":
         return ok({**MSG, "dice": {"emoji": "🎯", "value": 4}})
     if method in ("sendMessage", "editMessageText", "editMessageReplyMarkup",
-                  "sendAnimation", "sendSticker", "copyMessage"):
+                  "sendAnimation", "sendSticker", "copyMessage",
+                  "sendPhoto", "editMessageCaption"):
         return ok(MSG)
     return ok(True)          # setMyCommands, deleteWebhook, ... -> true
 
