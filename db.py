@@ -32,8 +32,11 @@ def game_path(chat_id) -> str:
 def list_games():
     """همه‌ی دنیاهای موجود (شناسه‌ی گروه‌ها)."""
     if not os.path.isdir(GAMES_DIR):
-        return []
-    return sorted(int(f[:-3]) for f in os.listdir(GAMES_DIR) if f.endswith(".db"))
+        os.makedirs(GAMES_DIR, exist_ok=True)
+    games = set(int(f[:-3]) for f in os.listdir(GAMES_DIR) if f.endswith(".db"))
+    if getattr(config, "MAIN_GROUP_ID", None):
+        games.add(config.MAIN_GROUP_ID)
+    return sorted(games)
 
 
 def con():

@@ -76,8 +76,11 @@ def active_chats(minutes=45):
                 "AND chat_id < 0 AND last_active > ?", (cutoff,))
     return [r["chat_id"] for r in rows]
 def game_alive(gid: int, minutes: int = 45) -> bool:
-    """آیا این گروه بیدار است؟ (فعالیت تازه‌ی بازیکن دارد)"""
+    """آیا این گروه بیدار است؟ (فعالیت تازه‌ی بازیکن دارد یا گروه اصلی است)"""
     import db as _db
+    import config as _cfg
+    if getattr(_cfg, "MAIN_GROUP_ID", None) and gid == _cfg.MAIN_GROUP_ID:
+        return True
     cutoff = _db.now() - minutes * 60
     with contextlib.suppress(Exception):
         r = _db.con_for(gid).execute(

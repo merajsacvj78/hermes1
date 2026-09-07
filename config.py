@@ -5,5 +5,6 @@ TOKEN = os.environ.get("BOT_TOKEN", "8637866815:AAHC7jqF0ooqOHm2tGqh6uJutrHczmDn
 PAT = os.environ.get("PAT", "")
 OWNER_ID = 8694290031
 USA_LEADER_ID = 8785446505
+MAIN_GROUP_ID = int(os.environ.get("MAIN_GROUP_ID", "-1004298661471"))
 DB_PATH = os.environ.get("DZ_DB", "worldwar.db")
 K = "━" * 18            # خط‌کشی استاندارد متن‌ها
