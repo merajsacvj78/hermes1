@@ -1,2 +1,2 @@
-aiogram>=3.13
-aiosqlite>=0.20
+d a rkzo n e /re q u ire m e n ts.txt
+aiogram~=3.31

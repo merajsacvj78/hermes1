@@ -1,0 +1,43 @@
+# -*- coding: utf-8 -*-
+"""‌ ریست بزرگ v35 — فقط کشورِ
+                               بازیکنان می‌ماند؛ همه‌چیز از صفر با ۱٬۰۰۰ دلار."""
+import contextlib
+import db
+def _reset_world():
+    """ریست یک دنیا — بازیکنان کشوردار فقط کشور و نامشان را نگه می‌دارند."""
+    with contextlib.suppress(Exception):
+        # ۱) تازه‌واردهای بی‌کشور حذف
+        db.ex("DELETE FROM users WHERE country IS NULL OR country = ''")
+        # ۲) بازیکنان کشوردار: تازه‌ساز — فقط کشور و نام می‌ماند
+        db.ex("UPDATE users SET money=1000, level=1, xp=0, rank=1, "
+              "hp=100, max_hp=100, kills=0, spy_ops=0, branch=NULL, "
+              "party_id=NULL, last_active=?", (db.now(),))
+        # ۳) دارایی‌ها، جنگ‌ها، سیاست و اخبار — پاک
+        for t in ("inventory", "wars", "alliances", "parties",
+                  "statements", "spyops", "defense", "news", "logs"):
+            db.ex(f"DELETE FROM {t}")
+        # ۴) کلیدهای کهنه (منو، دارایی، اقتصاد، رویداد) — پاک
+        db.ex("DELETE FROM kv")
+        db.kv_set("reset_v35", "1")
+def _starter_kits():
+    """‌ سلاح شروع برای همه‌ی بازیکنان فعلی — فقط یک بار."""
+    with contextlib.suppress(Exception):
+        for r in db.q("SELECT uid, country FROM users WHERE country IS NOT NULL"):
+            db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100) "
+                  "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+1",
+                  (r["uid"], f"drone_{r['country']}"))
+def run_all():
+    """در بوت روی همه‌ی دنیاها — فقط یک بار برای هر دنیا."""
+    for g in db.list_games():
+        db.GAME.set(g)
+        if not db.kv_get("reset_v38"):
+            # ‌ ریست تازه‌ی بازی: رهبران کشورشان را نگه می‌دارند، بقیه پاک؛
+            # پول همه ۱۰۰۰ دلار + کیت پهپاد تازه
+            _reset_world()
+            _starter_kits()
+            db.kv_set("reset_v38", "1")
+            db.kv_set("kit_v35", "1")
+        elif not db.kv_get("kit_v35"):
+            _starter_kits()
+            db.kv_set("kit_v35", "1")
+    db.GAME.set(None)
