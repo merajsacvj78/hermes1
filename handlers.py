@@ -720,6 +720,18 @@ def kb_straits() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="‌ سوئز", callback_data="str:سوئز")],
         [InlineKeyboardButton(text="‌ بازار جهانی", callback_data="mn:market"),
          InlineKeyboardButton(text="‌ منوی اصلی", callback_data="mn:main")]])
+
+@router.callback_query(F.data.startswith("snc:"))
+async def cb_sanction(c: CallbackQuery):
+    cid = c.data.split(":")[1]
+    if not cid:
+        await _edit(c, "🚫 <b>تحریم اقتصادی</b>\nکدام کشور؟ — فقط رهبر:\nتحریم صادرات و واردات کشور متخاصم را محدود می‌کند.", kb_sanction(c.from_user.id))
+    else:
+        msg = economy.sanction(c.from_user.id, cid)
+        await _edit(c, msg, kb_market())
+    await c.answer()
+
+
 def kb_sanction(uid) -> InlineKeyboardMarkup:
     """‌ انتخاب کشور برای تحریم — صفحه‌بندی‌شده."""
     return kb_targets(uid, "snc")
