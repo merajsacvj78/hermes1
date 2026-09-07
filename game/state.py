@@ -1,4 +1,5 @@
-"""⚔️ جنگ جهانی — وضعیت بازیکنان: شهروند → رزمنده → فرمانده کل."""
+"""⚔️ جنگ جهانی — وضعیت بازیکنان: شهروند → رزمنده → فرمانده کل + پروفایل سراسری و قدرت متناسب با زمان بازی."""
+import contextlib
 import json
 import db
 import texts
@@ -23,11 +24,41 @@ def get(uid: int) -> dict | None:
     return res
 
 
+def calculate_player_power(uid: int) -> int:
+    """محاسبه قدرت استراتژیک بازیکن بر اساس زمان بازی، لول، انهدام‌ها و ارزش تجهیزات."""
+    p = get(uid)
+    if not p:
+        return 10
+    base = p["level"] * 30 + p["kills"] * 20 + p["xp"] // 8
+    inv = db.q("SELECT iid, qty, dur FROM inventory WHERE uid=?", (uid,))
+    eq_power = 0
+    for it in inv:
+        item_data = countries.ITEMS.get(it["iid"])
+        if item_data:
+            eq_power += (item_data[3] + item_data[4]) * it["qty"] * it["dur"] // 100
+    return base + eq_power // 2
+
+
+def balance_country_command(cid: str):
+    """مدیریت چندفرماندهی در یک کشور:
+    اگر چند بازیکن در یک گروه عضو یک کشور باشند، بازیکنی که بیشتر پلی داده و لول بالاتری دارد رهبر کل و بقیه فرمانده ارشد خواهند بود.
+    """
+    commanders = db.q("SELECT uid, level, xp, kills FROM users WHERE country=? ORDER BY level DESC, kills DESC, xp DESC", (cid,))
+    if not commanders:
+        return
+    # نفر اول لیدر، بقیه فرماندهان ارشد
+    top_uid = commanders[0]["uid"]
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (top_uid,))
+    for sub in commanders[1:]:
+        db.ex("UPDATE users SET is_leader=0 WHERE uid=?", (sub["uid"],))
+
+
 def ensure(uid: int, name=None, chat_id=None, username=None):
+    clean_name = texts.esc(name or "")[:32]
     db.ex("""
     INSERT OR IGNORE INTO users(uid, name, joined, last_active, chat_id, username, money)
     VALUES(?, ?, ?, ?, ?, ?, 30000)
-    """, (uid, texts.esc(name or "")[:32], db.now(), db.now(), chat_id, username))
+    """, (uid, clean_name, db.now(), db.now(), chat_id, username))
     
     db.ex("UPDATE users SET last_active=?, chat_id=COALESCE(?, chat_id) WHERE uid=?",
           (db.now(), chat_id, uid))
@@ -37,7 +68,7 @@ def ensure(uid: int, name=None, chat_id=None, username=None):
         if row:
             old = row["name"] or ""
             if name and (not old or old.startswith("Player")):
-                db.ex("UPDATE users SET name=? WHERE uid=?", (texts.esc(name)[:32], uid))
+                db.ex("UPDATE users SET name=? WHERE uid=?", (clean_name, uid))
             if username and username != (row["username"] or ""):
                 db.ex("UPDATE users SET username=? WHERE uid=?", (username, uid))
 
@@ -60,6 +91,7 @@ def enlist(uid: int, country: str, name: str) -> bool:
         WHERE uid=?
         """, (country, clean_name, db.now(), uid))
         _starter_kit(uid, country)
+        balance_country_command(country)
         return True
 
     db.ex("""
@@ -67,6 +99,7 @@ def enlist(uid: int, country: str, name: str) -> bool:
     VALUES(?, ?, ?, 30000, ?, ?)
     """, (uid, clean_name, country, db.now(), db.now()))
     _starter_kit(uid, country)
+    balance_country_command(country)
     return True
 
 
@@ -96,6 +129,8 @@ def gain_xp(uid: int, xp: int):
         x -= xp_need(lv)
         lv += 1
     db.ex("UPDATE users SET xp=?, level=? WHERE uid=?", (x, lv, uid))
+    if p.get("country"):
+        balance_country_command(p["country"])
 
 
 def card(uid: int) -> str:
@@ -110,13 +145,15 @@ def card(uid: int) -> str:
     from game import invest as _iv
     _rate = _iv.rate(uid)
     spec, pct, sname = countries.spec_of(p["country"])
-    role_title = "👑 رهبر کشور" if p.get("is_leader") else "🎖️ رزمنده ارتش"
+    role_title = "👑 رهبر کل کشور" if p.get("is_leader") else "🎖️ سرلشکر ارشد"
+    tot_power = calculate_player_power(uid)
     
     return "\n".join([
         t.hdr(f"پرونده نظامی {p['name']}", "🪖"),
         t.row("فرمانده", texts.mention(uid, p["name"])),
         t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}" + (f" ({politics.regime_of(p['country'])})" if politics.regime_of(p['country']) else "")),
         t.row("سمت", role_title),
+        t.row("قدرت کل", f"⚡ <b>{t.fa(tot_power)} واحد توان رزمی</b>"),
         t.DASH,
         t.row("دکترین", f"🎯 {sname} — +{t.fa(pct)}٪ قدرت {spec}"),
         t.row("شاخه رزم", mil.branch_name(p) or "نیروهای مسلح مشترک"),

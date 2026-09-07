@@ -183,6 +183,8 @@ def strike_stage(uid: int, target_cid: str, stage: int, item_id: str = None) -> 
 📡 <b>{sys_name}</b> کشور {t_info['name']} موفق شد هجوم الکترونیکی شما را خنثی کند."""
             ann = f"🛡️ پدافند جنگال {t_info['name']} حمله سایبری ارتش {c_info['name']} را دفع کرد."
 
+        if alert_line:
+            ann += alert_line
         return msg, ann
 
     elif stage == 2:
@@ -209,6 +211,8 @@ def strike_stage(uid: int, target_cid: str, stage: int, item_id: str = None) -> 
 {b_stat}
 📈 امتیاز عملیات: <b>+۳۰ امتیاز جنگی</b> ثبت شد."""
         ann = f"💣 <b>بمباران سنگین پایگاه‌های نظامی در {t_info['name']}</b>\n{user_tag} از {c_info['flag']} <b>{c_info['name']}</b> پایگاه‌های استراتژیک دشمن را هدف قرار داد!\n{b_stat}"
+        if alert_line:
+            ann += alert_line
         return msg, ann
 
     elif stage == 3:
@@ -221,6 +225,8 @@ def strike_stage(uid: int, target_cid: str, stage: int, item_id: str = None) -> 
 🎯 آتشبارهای پدافندی و سایت‌های موشکی <b>{sys_name}</b> هدف موشک‌های ضدرادار قرار گرفتند.
 📉 سطح سپر هوایی و موشکی {t_info['name']} فرسوده و ضعیف‌تر شد (+۳۵ امتیاز)."""
         ann = f"🚀 <b>عملیات SEAD علیه سامانه‌های پدافندی {t_info['name']}</b>\n{user_tag} مواضع آتشبارهای پدافندی {t_info['name']} را درهم کوبید."
+        if alert_line:
+            ann += alert_line
         return msg, ann
 
     elif stage == 4:
@@ -244,6 +250,8 @@ def strike_stage(uid: int, target_cid: str, stage: int, item_id: str = None) -> 
 🏭 مجتمع‌های صنعتی و زرادخانه‌های نظامی دشمن منهدم شد (+{dmg_score} امتیاز جنگی)."""
             ann = f"🔥 <b>فوری — اصابت مستقیم موشک‌های راهبردی به خاک {t_info['name']}</b>\nموشک‌های سنگین ارتش {c_info['name']} با عبور از پدافند، مراکز نظامی {t_info['name']} را ویران ساختند!"
 
+        if alert_line:
+            ann += alert_line
         return msg, ann
 
     elif stage == 5:
@@ -286,6 +294,8 @@ def strike_stage(uid: int, target_cid: str, stage: int, item_id: str = None) -> 
 سنگرهای مدافعان شهر <b>{chosen_city}</b> زیر آتش قرار گرفت ({strike_power} آسیب وارده).\n🛡️ استقامت پادگان شهر: <b>{new_city_hp} HP باقی‌مانده</b>."""
             ann = f"⚔️ <b>درگیری‌های کوچه به کوچه در {chosen_city}</b>\nنیروهای ارتش {c_info['name']} خطوط دفاعی پادگان <b>{chosen_city}</b> ({t_info['name']}) را زیر آتش گرفتند."
 
+        if alert_line:
+            ann += alert_line
         return msg, ann
 
     return "⚠️ فاز عملیاتی نامعتبر است.", ""
@@ -333,20 +343,29 @@ def strike(uid: int, kind: str, count: int = 1, target: str = None) -> str:
             weapon_name = f"{item_data[1]} {item_data[0]}"
         db.ex("UPDATE inventory SET dur=MAX(5, dur - ? * 2) WHERE uid=? AND iid=?", (count, uid, inv_row["iid"]))
 
+    target_troops = db.q("SELECT uid, name FROM users WHERE country=? LIMIT 6", (ecid,))
+    target_tags = " ".join(texts.mention(t["uid"], t["name"]) for t in target_troops) if target_troops else ec.get('name','')
+    alert_exp = int(db.kv_get(f"defense_alert:{ecid}", "0") or 0)
+    alert_line = ""
+    if db.now() > alert_exp:
+        db.kv_set(f"defense_alert:{ecid}", str(db.now() + 120))
+        alert_line = f"\n🚨 <b>هشدار پدافند هوایی:</b> {target_tags} (۲ دقیقه مهلت واکنش سریع و اسکرامبل دفاعی)"
+
     if intercepted:
         _add_war_score(p["country"], ecid, 5 * count)
-        ann = f"🛡️ <b>دفاع هوایی موفق {ec.get('name','')}</b>\n{sys_name} کشور {ec.get('name','')} موج حملات {kind} ارتش {my_c.get('name','')} را در آسمان خنثی کرد."
+        ann = f"🛡️ <b>دفاع هوایی موفق {ec.get('name','')}</b>\n{sys_name} کشور {ec.get('name','')} موج حملات {kind} ارتش {my_c.get('name','')} را در آسمان خنثی کرد." + alert_line
         PENDING_BBC.append(ann)
         return f"""🛡️ <b>حمله توسط پدافند دشمن رهگیری شد!</b>
 {texts.FULL}
-سامانه پدافند <b>{sys_name}</b> متعلق به {ec.get('flag','')} {ec.get('name','')} موفق به رهگیری ضربت {kind} شد."""
+سامانه پدافند <b>{sys_name}</b> متعلق به {ec.get('flag','')} {ec.get('name','')} موفق به رهگیری ضربت {kind} شد.
+💡 <i>برای افزایش شانس نفوذ، با عملیات‌های موشکی و C4ISR پدافند دشمن را تضعیف کنید.</i>"""
     
     # ضربه موفق
     score = int((20 + count * 15) * dmg_mult)
     _add_war_score(p["country"], ecid, score)
     infra.damage(ecid, "industry", 5 * count)
 
-    ann = f"💥 <b>اصابت موج ضربتی {kind} به {ec.get('name','')}</b>\n{user_tag} از {my_c.get('flag','')} <b>{my_c.get('name','')}</b> با {weapon_name} مواضع دشمن را هدف قرار داد (+{score} امتیاز)!"
+    ann = f"💥 <b>اصابت موج ضربتی {kind} به {ec.get('name','')}</b>\n{user_tag} از {my_c.get('flag','')} <b>{my_c.get('name','')}</b> با {weapon_name} مواضع دشمن را هدف قرار داد (+{score} امتیاز)!" + alert_line
     PENDING_BBC.append(ann)
 
     return f"""💥 <b>اصابت موفقیت‌آمیز ضربت {kind}!</b>

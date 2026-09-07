@@ -231,6 +231,8 @@ def seed_special_users():
     ۲. رهبر آمریکا (8785446505): ۸۰٬۰۰۰ دلار + ۵ ست تجهیزات و پدافند پاتریوت
     ۳. تمام رزمندگان و بازیکنان: حداقل ۳۰٬۰۰۰ دلار + تسلیحات سازمانی کامل
     """
+    import countries
+    from game import defense
     iran_uid = config.OWNER_ID  # 8694290031
     usa_uid = getattr(config, "USA_LEADER_ID", 8785446505)
 
