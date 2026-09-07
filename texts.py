@@ -187,6 +187,17 @@ CUST_EMOJI = {
 }
 
 
+def to_int(s) -> int | None:
+    if s is None:
+        return None
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    clean = str(s).translate(trans).strip().replace(",", "").replace("_", "")
+    try:
+        return int(clean)
+    except Exception:
+        return None
+
+
 def fx(text: str, seed=None) -> str:
     """ایموجی‌های متنی جنگی — تگ‌های HTML و منشن‌ها را امن نگه می‌دارد."""
     return text

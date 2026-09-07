@@ -53,6 +53,77 @@ def list_parties(uid) -> str:
     lines.append("")
     lines.append("‌ عضویت با دکمه‌های زیر · ‌ حزب جدید هم همان‌جا")
     return "\n".join(lines)
+def join_party(uid: int, pid: int) -> str:
+    p = state.active(uid)
+    if not p:
+        return "⚠️ اول «شروع»"
+    party = db.one("SELECT * FROM parties WHERE id=? AND country=?", (pid, p["country"]))
+    if not party:
+        return "⚠️ حزب یافت نشد."
+    if p["party_id"] == party["id"]:
+        return "⚠️ شما از قبل عضو این حزب هستید."
+    db.ex("UPDATE users SET party_id=? WHERE uid=?", (party["id"], uid))
+    db.ex("UPDATE parties SET members=members+1, power=power+5 WHERE id=?", (party["id"],))
+    return f"✅ شما به حزب <b>{party['name']}</b> پیوستید.\n⚡ قدرت جدید حزب: {texts.fa(party['power'] + 5)}"
+
+
+def panel(uid: int) -> str:
+    p = state.active(uid)
+    if not p:
+        return "⚠️ اول «شروع»"
+    c = countries.COUNTRIES[p["country"]]
+    party = my_party(uid)
+    revolts = db.q("SELECT * FROM parties WHERE country=? AND rebel=1", (p["country"],))
+    t = texts
+    lines = [
+        t.hdr(f"دفتر امور سیاسی و امنیت ملی {c['name']} {c['flag']}", "🏛️"),
+        f"👑 نظام سیاسی: <b>{regime_of(p['country'])}</b>",
+        f"🚩 حزب شما: <b>{party['name'] if party else 'مستقل / بدون حزب'}</b>",
+        ""
+    ]
+    if revolts:
+        lines.append("🚨 <b>هشدار امنیتی: شورش داخلی فعال است!</b>")
+        for rv in revolts:
+            lines.append(f"⚠️ حزب شورشی <b>{rv['name']}</b> (قدرت: {rv['power']}) علیه دولت قیام کرده است.")
+        lines.append("🛡️ رهبر کشور می‌تواند با اعزام گارد ملی و پلیس ضدشورش این قیام را سرکوب کند.\n")
+    else:
+        lines.append("🕊️ آرامش سیاسی و امنیت داخلی در سراسر کشور برقرار است.\n")
+    lines.append("💡 از دکمه‌های زیر برای احزاب، بیانیه‌ها، سرکوب یا آغاز شورش استفاده کنید.")
+    return "\n".join(lines)
+
+
+def suppress_rebellion(uid: int) -> tuple[str, str]:
+    """سرکوب شورش و برقراری نظم توسط رهبر کشور."""
+    p = state.active(uid)
+    if not p:
+        return "⚠️ اول «شروع»", ""
+    cid = p["country"]
+    c_info = countries.COUNTRIES[cid]
+    user_tag = texts.mention(uid, p["name"])
+    
+    revolts = db.q("SELECT * FROM parties WHERE country=? AND rebel=1", (cid,))
+    if not revolts:
+        return "🕊️ هیچ شورش فعالی در کشورتان وجود ندارد.", ""
+        
+    cost = 1500
+    if p["money"] < cost:
+        return f"⚠️ برای اعزام واحدهای ضدشورش و برقراری حکومت نظامی به {texts.money(cid, cost)} نیاز دارید.", ""
+        
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
+    suppressed_names = []
+    for rv in revolts:
+        db.ex("UPDATE parties SET rebel=0, power=MAX(10, power-60) WHERE id=?", (rv["id"],))
+        suppressed_names.append(rv["name"])
+        
+    s_str = "، ".join(suppressed_names)
+    msg = f"🛡️ <b>شورش با موفقیت سرکوب شد!</b>\nواحدهای ضدشورش و گارد ملی کنترل اوضاع را در دست گرفتند و حزب ({s_str}) خلع سلاح شد."
+    ann = f"""🚨 <b>خبر فوری امنیتی — سرکوب شورش در {c_info['flag']} {c_info['name']}</b>
+{texts.FULL}
+فرمانده {user_tag} با اعزام نیروهای ویژه و گارد ضدشورش، قیام حزب <b>«{s_str}»</b> را به طور کامل مهار و سرکوب کرد!
+⚖️ امنیت عمومی و قانون در سراسر کشور برقرار گردید."""
+    return msg, ann
+
+
 def join(uid, name: str) -> str:
     p = state.active(uid)
     if not p:

@@ -51,8 +51,11 @@ async def world_loop(bot: Bot):
                 if not events.game_alive(g):
                     continue
 
-                # ۱. واریز درآمدهای ساعتی به وقت ایران
-                invest.distribute_hourly_payouts_for_all(g)
+                # ۱. واریز درآمدهای ساعتی به وقت ایران و اعلام در گروه با تگ
+                hourly_msgs = invest.distribute_hourly_payouts_for_all(g)
+                for h_msg in hourly_msgs:
+                    with contextlib.suppress(Exception):
+                        await bot.send_message(g, h_msg, parse_mode="HTML")
 
                 # ۲. تیک اقتصاد، دلار و تورم
                 w = economy.tick()

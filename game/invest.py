@@ -140,14 +140,17 @@ def collect(uid) -> str:
 
 
 def distribute_hourly_payouts_for_all(chat_id: int = None) -> list[str]:
-    """واریز خودکار سر ساعت برای تمام بازیکنانی که دارایی دارند (در حلقه جهان)."""
-    rows = db.q("SELECT uid, country, money FROM users WHERE country IS NOT NULL")
-    notifications = []
+    """واریز خودکار سر ساعت برای تمام بازیکنانی که دارایی دارند و ارسال پیام اطلاع‌رسانی با تگ."""
+    rows = db.q("SELECT uid, name, country, money FROM users WHERE country IS NOT NULL")
+    paid_users = []
+    total_distributed = 0
+    
+    current_hour = db.now() // 3600
+    last_ann = db.kv_get("last_hourly_ann_hour")
+    
     for r in rows:
         uid = r["uid"]
         rt = rate(uid)
-        if not rt:
-            continue
         last = _last(uid)
         if not last:
             db.kv_set(f"invt:{uid}", str(db.now()))
@@ -157,8 +160,28 @@ def distribute_hourly_payouts_for_all(chat_id: int = None) -> list[str]:
         if hours >= 1:
             from game import infra as _ifr
             from game import welfare as _wl
+            from game import economy as _eco
             mult = _ifr.output_mult(r["country"]) * _wl.welfare_mult(r["country"])
-            pay = int(rt * hours * mult)
-            db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
+            inv_pay = int((rt or 0) * hours * mult)
+            oil_pay = int(_eco.oil_share(r["country"]) * hours)
+            total_pay = inv_pay + oil_pay
+            if total_pay > 0:
+                db.ex("UPDATE users SET money=money+? WHERE uid=?", (total_pay, uid))
+                paid_users.append((uid, r["name"], r["country"], total_pay))
+                total_distributed += total_pay
             db.kv_set(f"invt:{uid}", str(last + hours * 3600))
+            
+    notifications = []
+    if str(current_hour) != last_ann and paid_users:
+        db.kv_set("last_hourly_ann_hour", str(current_hour))
+        tags = " ".join(texts.mention(u[0], u[1]) for u in paid_users[:12])
+        msg = f"""💰 <b>واریز خودکار درآمدهای ساعتی و سهم نفت ملی</b>
+{texts.FULL}
+{tags}
+
+📊 <b>گزارش خزانه مرکزی:</b>
+سود مجتمع‌های سرمایه‌گذاری، صنایع و سهم فروش نفت به حساب کلیه فرماندهان فعال واریز گردید (مجموع واریزی: <b>{texts.money('us', total_distributed)}</b>).
+💡 موجودی و تراکنش‌های خود را از «منو ➔ مشخصات من» بررسی کنید."""
+        notifications.append(msg)
+        
     return notifications

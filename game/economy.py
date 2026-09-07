@@ -8,14 +8,70 @@ import countries
 DEFAULTS = dict(oil=82.0, dollar=1.0, inflation=0.03)
 
 # کالاهای بازرگانی جهانی (شناسه، نام، ایموجی، قیمت پایه)
+SPREAD = 0.10
+
 GOODS = [
     ("wheat", "گندم و غلات", "🌾", 120),
     ("steel", "فولاد و فلزات", "⚙️", 350),
     ("chip", "نیمه‌هادی و تراشه", "💾", 850),
     ("oil", "نفت خام", "🛢️", 450),
     ("gold", "شمش طلا", "🥇", 2400),
+    ("copper", "مس صنعتی", "🧱", 200),
 ]
 GOODS_MAP = {g[0]: g for g in GOODS}
+
+
+def good_price(gid: str) -> int:
+    g = GOODS_MAP.get(gid)
+    return real_price(g[3]) if g else 100
+
+
+def _save_cargo(uid: int, cargo: dict):
+    db.kv_set(f"cargo:{uid}", json.dumps(cargo, ensure_ascii=False))
+
+
+def holdings(uid: int) -> dict:
+    return _user_cargo(uid)
+
+
+def trade_buy(uid: int, gid: str, qty: int = 1) -> str:
+    from game import state
+    p = state.active(uid)
+    if not p:
+        return "⚠️ اول «شروع»"
+    g = GOODS_MAP.get(gid)
+    if not g:
+        return "⚠️ کالای نامعتبر."
+    cargo = _user_cargo(uid)
+    current_cnt = cargo.get(gid, 0)
+    if current_cnt + qty > 20:
+        return f"⚠️ انبار کالا پر است! حداکثر گنجایش ۲۰ واحد است (موجودی فعلی: {current_cnt})."
+    cost = int(good_price(gid) * (1 + SPREAD) * qty)
+    if p["money"] < cost:
+        return f"⚠️ موجودی ناکافی! هزینه: {texts.money(p['country'], cost)} (موجودی: {texts.money(p['country'], p['money'])})"
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
+    cargo[gid] = current_cnt + qty
+    _save_cargo(uid, cargo)
+    return f"🚢 واردات {g[1]} ×{qty} انجام شد — انبار: {cargo[gid]}"
+
+
+def trade_sell(uid: int, gid: str, qty: int = 1) -> str:
+    from game import state
+    p = state.active(uid)
+    if not p:
+        return "⚠️ اول «شروع»"
+    g = GOODS_MAP.get(gid)
+    if not g:
+        return "⚠️ کالای نامعتبر."
+    cargo = _user_cargo(uid)
+    have = cargo.get(gid, 0)
+    if have < qty:
+        return f"⚠️ این کالا را در انبارت نداری (موجودی: {texts.fa(have)})."
+    gain = int(good_price(gid) * (1 - SPREAD) * qty)
+    db.ex("UPDATE users SET money=money+? WHERE uid=?", (gain, uid))
+    cargo[gid] = have - qty
+    _save_cargo(uid, cargo)
+    return f"🚢 صادرات {g[1]} ×{qty} انجام شد — دریافتی: {texts.money(p['country'], gain)}"
 
 # سهم تولید نفت روزانه کشورها (هزار بشکه)
 OIL_BPD = {
@@ -116,7 +172,30 @@ def sanction(leader_uid: int, target_cid: str) -> str:
     return msg
 
 
+def deal_price(price: int) -> int:
+    return max(10, int(price * 0.80))
+
+
+def fx(cid: str) -> float:
+    c = countries.COUNTRIES.get(cid, {})
+    base = float(c.get("fx", 1.0)) if c else 1.0
+    if is_sanctioned(cid) or sanctioned(cid) or int(db.kv_get(f"sanction:{cid}", "0") or 0) > 0:
+        return base * 1.35
+    return base
+
+
+def oil_share(cid: str) -> int:
+    bpd = OIL_BPD.get(cid, 1000)
+    base = max(50, bpd // 25)
+    if is_sanctioned(cid) or sanctioned(cid) or int(db.kv_get(f"sanction:{cid}", "0") or 0) > 0:
+        return base // 2
+    return base
+
+
 def daily_deals(cid: str) -> list:
+    c_items = countries.COUNTRIES.get(cid, {}).get("items", [])
+    if c_items:
+        return c_items[:2]
     return ["f35", "sejjil", "shahed", "abrams"]
 
 

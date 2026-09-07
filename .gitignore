@@ -1,5 +1,9 @@
 *.sqlite3
 *.sqlite3*
+*.db
+*.db-shm
+*.db-wal
+games/*.db*
 .env
 .venv/
 __pycache__/

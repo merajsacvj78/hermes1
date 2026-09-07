@@ -163,6 +163,52 @@ def free_colony(cid: str):
     db.kv_set(f"occupied:{cid}", "[]")
 
 
+colonize = set_colony
+free = free_colony
+
+
+def country_map(cid: str) -> str:
+    c = countries.COUNTRIES.get(cid)
+    if not c:
+        return "⚠️ کشور نامعتبر است."
+    t = texts
+    cities = get_cities(cid)
+    occ = occupied(cid)
+    bases = list_country_bases(cid)
+    col = colony_of(cid)
+    lines = [
+        t.hdr(f"نقشه ژئوپلیتیک و شهرهای {c['name']} {c['flag']}", "🗺️"),
+        f"🏛️ پایتخت: <b>{c.get('cap', cities[0] if cities else 'نامشخص')}</b>",
+        f"🌊 وضعیت ساحلی: <b>{'دسترسی به آب‌های آزاد' if coastal(cid) else 'خشکی‌بست'}</b>",
+        ""
+    ]
+    if col:
+        m_c = countries.COUNTRIES.get(col, {})
+        lines.append(f"⚠️ وضعیت حاکمیت: <b>تحت اشغال و مستعمره {m_c.get('flag','')} {m_c.get('name','')}</b>\n")
+    lines.append("🏙️ <b>شهرهای تحت کنترل:</b>")
+    for city in cities:
+        status_icon = "🔴 اشغال شده" if city in occ else "🟢 در اختیار ارتش خودی"
+        city_bases = [b for b in bases if b.get("city") == city]
+        b_info = f" ({len(city_bases)} پایگاه نظامی)" if city_bases else ""
+        lines.append(f"▫️ <b>{city}</b>: {status_icon}{b_info}")
+    return "\n".join(lines)
+
+
+def all_colonies() -> dict:
+    """نقشه تمامی مستعمرات جهان: {colony_cid: master_cid}"""
+    res = {}
+    for cid in countries.COUNTRIES:
+        m = db.kv_get(f"colony_of:{cid}")
+        if m:
+            res[cid] = m
+    return res
+
+
+def colonies_of(master_cid: str) -> list:
+    """لیست کشورهایی که مستعمره master_cid هستند."""
+    return [cid for cid, m in all_colonies().items() if m == master_cid]
+
+
 # ═══════════ پایگاه‌های نظامی در شهرها ═══════════
 BASE_TYPES = {
     "airbase": {"name": "پایگاه هوایی و آشیانه جنگنده‌ها", "cost": 4500, "hp": 150, "bonus": "افزایش برد و پشتیبانی هوایی"},

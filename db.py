@@ -229,6 +229,7 @@ def seed_special_users():
     """اعطای هدایای ویژه و تنظیم لیدرهای اصلی در دیتابیس جاری:
     ۱. مالک بازی و رهبر ایران (8694290031): ۱٬۰۹۰٬۰۰۰ دلار + ۱۰ ست تجهیزات و پدافند باور
     ۲. رهبر آمریکا (8785446505): ۸۰٬۰۰۰ دلار + ۵ ست تجهیزات و پدافند پاتریوت
+    ۳. تمام رزمندگان و بازیکنان: حداقل ۳۰٬۰۰۰ دلار + تسلیحات سازمانی کامل
     """
     iran_uid = config.OWNER_ID  # 8694290031
     usa_uid = getattr(config, "USA_LEADER_ID", 8785446505)
@@ -285,6 +286,19 @@ def seed_special_users():
     defense.ensure("us")
     for layer in defense.LAYERS:
         ex("UPDATE defense SET level=95, hp=100 WHERE cid='us' AND layer=?", (layer,))
+
+    # 3. تنظیم موجودی و تسلیحات سازمانی برای تمامی رزمندگان و بازیکنان دیگر
+    ex("UPDATE users SET money=30000 WHERE money < 30000")
+    all_users = q("SELECT uid, country FROM users WHERE country IS NOT NULL AND uid NOT IN (?, ?)", (iran_uid, usa_uid))
+    for u in all_users:
+        defense.ensure(u["country"])
+        c_items = countries.COUNTRIES.get(u["country"], {}).get("items", [])
+        for iid in c_items:
+            ex("""
+            INSERT INTO inventory(uid, iid, qty, dur)
+            VALUES(?, ?, 2, 100)
+            ON CONFLICT(uid, iid) DO UPDATE SET qty=MAX(inventory.qty, 2), dur=100
+            """, (u["uid"], iid))
 
 
 def reset_and_clean_all():

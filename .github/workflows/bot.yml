@@ -1,0 +1,32 @@
+d a rkzo n e /.g ith u b /w o rkflo w s/b o t.ym l
+name: worldwar-bot
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */4 * * *'
+concurrency:
+  group: worldwar-run
+  cancel-in-progress: true
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -c "import db; db.init(); import countries; countries.init_items(); print('db ok')"
+      - name: run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          PAT: ${{ secrets.PAT }}
+          INLOOP_AUTOSAVE: "1"
+          AUTOSAVE_MIN: "5"
+        run: python -u run.py
+      - name: autosave db
+        if: always()
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: python save_db.py || echo "save failed"

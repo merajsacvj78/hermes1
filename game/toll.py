@@ -252,3 +252,48 @@ def straits_overview(uid: int) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def daily_announce_needed() -> bool:
+    day = db.day_index()
+    last = db.kv_get("toll_ann_day")
+    if last == str(day):
+        return False
+    db.kv_set("toll_ann_day", str(day))
+    return True
+
+
+def is_on(strait_key: str = "hormuz") -> bool:
+    return is_toll_on(strait_key)
+
+
+def status(uid: int = None) -> str:
+    return straits_overview(uid)
+
+
+def pay(uid: int, strait_key: str = "hormuz") -> str:
+    return pay_user_toll(uid, strait_key)
+
+
+def toggle(uid: int, strait_key: str = "hormuz") -> tuple[str, str]:
+    return toggle_toll(uid, strait_key)
+
+
+def collect(uid: int, strait_key: str = "hormuz") -> str:
+    return collect_pot(uid, strait_key)
+
+
+def enforce(uid: int, strait_key: str = "hormuz"):
+    from game import state
+    p = state.active(uid)
+    if not p:
+        return
+    s = STRAITS.get(strait_key, {})
+    if p["country"] in s.get("owners", []):
+        return
+    day = db.day_index()
+    if db.kv_get(f"toll_enforced:{uid}:{day}"):
+        return
+    db.kv_set(f"toll_enforced:{uid}:{day}", "1")
+    fine = int(p["money"] * 0.10)
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (fine, uid))

@@ -1,12 +1,14 @@
-"""‌ جنگ جهانی — نظامی: شاخه‌ها، تجهیزات، تعمیر، رزم."""
+"""⚔️ جنگ جهانی — سیستم نظامی، شاخه‌های رزمی، زرادخانه ملی، بازار سیاه و ارتقا."""
 import random
 import db
 import countries
 import texts
 from game import economy, state
-def branch_name(p) -> str:
-    c = countries.COUNTRIES.get(p["country"])
-    if not c or p["branch"] in (None, ""):
+
+
+def branch_name(p: dict) -> str:
+    c = countries.COUNTRIES.get(p.get("country"))
+    if not c or not p.get("branch"):
         return ""
     b = p["branch"]
     if isinstance(b, int) or (isinstance(b, str) and b.isdigit()):
@@ -14,349 +16,371 @@ def branch_name(p) -> str:
             return c["branches"][int(b)]
         except Exception:
             return ""
-    return b if b in c["branches"] else ""
-def join_branch(uid, idx: int) -> str:
+    return b if b in c["branches"] else str(b)
+
+
+def join_branch(uid: int, idx: int) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
-    if p["branch"]:
-        return "‌ قبلاًعضو شده‌ای."
-    c = countries.COUNTRIES[p["country"]]
-    if idx < 0 or idx >= len(c["branches"]):
-        return "‌ شاخه نامعتبر."
-    db.ex("UPDATE users SET branch=? WHERE uid=?", (idx, uid))
+        return "⚠️ اول «شروع»"
+    if p.get("branch"):
+        return "⚠️ شما قبلاً عضو یکی از شاخه‌های نظامی شده‌اید."
+    c = countries.COUNTRIES.get(p["country"])
+    if not c or idx < 0 or idx >= len(c["branches"]):
+        return "⚠️ شاخه نظامی نامعتبر است."
+    
+    branch_title = c["branches"][idx]
+    db.ex("UPDATE users SET branch=? WHERE uid=?", (branch_title, uid))
     t = texts
     k, rname, reff = role_of(state.active(uid))
-    role_line = f"\n‌ نقش: <b>{rname}</b> — {reff}" if k else ""
+    role_line = f"\n🎯 تخصص سازمانی: <b>{rname}</b> — {reff}" if k else ""
     return "\n".join([
-        t.hdr("عضویت نظامی", "‌"),
-        t.row("شاخه", c["branches"][idx]),
+        t.hdr("عضویت در نیروهای مسلح", "🎖️"),
+        t.row("شاخه رزم", branch_title),
         t.row("کشور", f"{c['flag']} {c['name']}"),
         role_line,
-        "", "اکنون سرباز این شاخه‌ای — درجه با رزم بالا می‌رود.",
-        "‌ گام بعد: تجهیزات بخر و رزم کن — از «منو»"])
-# ═══ ‌ نقش شاخه‌ها — هر شاخه یک اثر واقعی و دقیق ═══
+        "",
+        "🎖️ به رده‌های رزمی خوش آمدید! با شرکت در جنگ‌ها و رزم انفرادی درجه نظامی شما ارتقا خواهد یافت.",
+    ])
+
+
 BRANCH_ROLE_DEFS = {
-    "atk":  ("‌ خط مقدم", "+۱۵٪ قدرت همه‌ی ضربت‌های تو در جنگ"),
-    "miss": ("‌ موشکی‌انداز", "+۱۰٪ قدرت ضربت موشکی"),
-    "air":  ("✈‌ خلبان", "+۱۰٪ قدرت ضربت هوایی و پهپادی"),
-    "sea":  ("‌ ناوگان", "+۱۰٪ قدرت ضربت دریایی"),
-    "grd":  ("‌ زرهی", "+۱۰٪ قدرت ضربت زمینی"),
-    "def":  ("‌ سپر وطن", "کشورت به‌ازای هر عضو ۵٪ کمتر آسیب می‌بیند (تا ۱۵٪)"),
-    "eco":  ("⚙‌ لجستیک", "+۱۰٪ درآمد شیفت کاری و جیره‌ی تو"),
+    "atk":  ("خط مقدم و تهاجم ویژه", "+۱۵٪ قدرت تخریب در تمامی حملات"),
+    "miss": ("فرماندهی موشکی", "+۲۰٪ قدرت ضربات موشک‌های بالستیک"),
+    "air":  ("نیروی هوایی و پهپادی", "+۲۰٪ قدرت بمباران هوایی و پهپادی"),
+    "sea":  ("ناوگان دریایی", "+۲۰٪ قدرت آتش در نبردهای دریایی"),
+    "grd":  ("نیروی زرهی و مکانیزه", "+۲۰٪ قدرت پیشروی در فاز نبرد شهری"),
+    "def":  ("سپر پدافند ملی", "کاهش ۱۵٪ خسارات وارده از حملات دشمن به کشور"),
+    "eco":  ("لجستیک و پشتیبانی", "+۱۵٪ درآمد از شیفت‌های کاری و جیره"),
 }
-# نام شاخه → نقش تخصصی همان حوزه؛ بدون تطبیق، نقش جایگاهی
+
 _NAME_RULES = (
     ("موشکی", "miss"), ("هوایی", "air"), ("پرواز", "air"), ("هواپیمایی", "air"),
-    ("دریایی", "sea"), ("ناو", "sea"), ("نگ ", "sea"), ("نگ‌", "sea"),
-    ("زرهی", "grd"), ("تانک", "grd"), ("پدافند", "def"), ("پدафند", "def"),
-    ("مارینز", "atk"), ("دلتا", "atk"), ("اسپتس", "atk"), ("واگنر", "atk"),
-    ("کماندو", "atk"), ("تکاور", "atk"), ("چتر", "atk"), ("ویژه", "atk"),
+    ("دریایی", "sea"), ("ناو", "sea"), ("زرهی", "grd"), ("تانک", "grd"),
+    ("پدافند", "def"), ("مارینز", "atk"), ("دلتا", "atk"), ("اسپتسناز", "atk"),
+    ("کماندو", "atk"), ("تکاور", "atk"), ("ویژه", "atk"),
 )
-_DEFAULT_BY_IDX = ("atk", "def", "eco")
-def role_of(p) -> tuple:
-    """‌ نقش شاخه‌ی بازیکن — (کلید، نام، متن اثر)؛ دقیق و همیشه معتبر."""
-    if not p or p["branch"] in (None, ""):
+
+
+def role_of(p: dict) -> tuple:
+    if not p or not p.get("branch"):
         return ("", "", "")
     nm = branch_name(p)
     for word, key in _NAME_RULES:
         if word in nm:
-            k = key
-            break
-    else:
-        idx = int(p["branch"]) if str(p["branch"]).isdigit() else 0
-        k = _DEFAULT_BY_IDX[idx % len(_DEFAULT_BY_IDX)]
-    name, eff = BRANCH_ROLE_DEFS[k]
-    return (k, name, eff)
-def atk_mult(p, kind: str):
-    """⚔‌ ضریب ضربتهای بازیکن از نقش شاخه — (ضریب، نشانه)."""
+            name, eff = BRANCH_ROLE_DEFS[key]
+            return (key, name, eff)
+    name, eff = BRANCH_ROLE_DEFS["atk"]
+    return ("atk", name, eff)
+
+
+def atk_mult(p: dict, kind: str) -> tuple[float, str]:
     k, name, _ = role_of(p)
     if not k:
         return 1.0, ""
     if k == "atk":
-        return 1.15, f" {name}"
-    if kind == "پهپادی" and k == "air":
-        return 1.10, f" {name}"
+        return 1.15, f" ({name})"
     pairs = {"miss": "موشکی", "air": "هوایی", "sea": "دریایی", "grd": "زمینی"}
-    if pairs.get(k) == kind:
-        return 1.10, f" {name}"
+    if pairs.get(k) == kind or (k == "air" and kind == "پهپادی"):
+        return 1.10, f" ({name})"
     return 1.0, ""
+
+
 def def_mult(cid: str) -> float:
-    """‌ سپر کشور — هر عضو «سپر وطن» ۵٪ آسیب کمتر، سقف ۱۵٪."""
     n = 0
-    for r in db.q("SELECT branch FROM users WHERE country=? AND branch IS NOT NULL",
-                  (cid,)):
+    for r in db.q("SELECT branch FROM users WHERE country=? AND branch IS NOT NULL", (cid,)):
         p = {"branch": r["branch"], "country": cid}
         if role_of(p)[0] == "def":
             n += 1
-    return 1 - min(0.15, 0.05 * n)
-def eco_mult(uid) -> float:
-    """⚙‌ لجستیک — ۱۰٪ درآمد بیشتر از کار و جیره."""
+    return 1.0 - min(0.15, 0.05 * n)
+
+
+def eco_mult(uid: int) -> float:
     p = state.active(uid)
     return 1.10 if p and role_of(p)[0] == "eco" else 1.0
-# ═══════════ تجهیزات ═══════════
-def arsenal(uid) -> str:
-    """زرادخانه‌ی مخصوص کشور بازیکن."""
+
+
+# ═══════════ زرادخانه و تجهیزات ═══════════
+
+def arsenal(uid: int) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
+        return "⚠️ اول «شروع»"
     c = countries.COUNTRIES[p["country"]]
     sp = countries.spec_of(p["country"])
-    lines = [texts.hdr(f"زرادخانه {c['name']}", "‌"),
-             f"‌ تخصص کشور: {sp[2]} — +{texts.fa(sp[1])}٪ در حمله‌ی {sp[0]}",
-             f"‌ خزانه: {texts.money(p['country'], p['money'])}", ""]
-    from game import economy
+    lines = [
+        texts.hdr(f"زرادخانه نظامی {c['name']} {c['flag']}", "🏛️"),
+        f"🎯 دکترین ویژه: <b>{sp[2]}</b> (+{texts.fa(sp[1])}٪ در حملات {sp[0]})",
+        f"💰 موجودی خزانه: <b>{texts.money(p['country'], p['money'])}</b>",
+        ""
+    ]
     for iid in c["items"]:
         it = countries.ITEMS[iid]
-        own = db.one("SELECT qty,dur FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+        own = db.one("SELECT qty, dur FROM inventory WHERE uid=? AND iid=?", (uid, iid))
         price = economy.real_price(it[5])
-        mark = (f"‌ {texts.fa(own['qty'])}× · دوام {texts.fa(own['dur'])}٪"
-                if own else f"‌ {texts.fa(price)}")
-        lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔‌{texts.fa(it[3])} "
-                     f"‌{texts.fa(it[4])} · {mark}")
+        mark = f"📦 <b>{texts.fa(own['qty'])} عدد</b> (دوام {texts.fa(own['dur'])}٪)" if own else f"💵 {texts.money(p['country'], price)}"
+        lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️ {texts.fa(it[3])} قدرت | 🛡️ {texts.fa(it[4])} پدافند\n   └ وضعیت: {mark}")
+        
     deals = economy.daily_deals(p["country"])
     if deals:
-        lines += ["", "‌ <b>پیشنهاد ویژه‌ی امروز — ۲۰٪ تخفیف</b> (فقط امروز):"]
+        lines += ["", "🔥 <b>پیشنهاد ویژه روزانه (۲۰٪ تخفیف اختصاصی):</b>"]
         for diid in deals:
             it2 = countries.ITEMS[diid]
             dp = economy.deal_price(economy.real_price(it2[5]))
-            lines.append(f"   {it2[1]} {it2[0]} — ‌ {texts.fa(dp)} دلار")
-    lines += ["", "‌ خرید با دکمه‌های زیر — ×۱ یا ×۵ (سقف ۹ عدد)"]
+            lines.append(f"   ▫️ {it2[1]} {it2[0]} ➔ 💵 <b>{texts.money(p['country'], dp)}</b>")
+            
+    lines += ["", "🛒 <i>برای خرید تسلیحات از دکمه‌های زیر استفاده کنید (×۱ یا ×۵):</i>"]
     return "\n".join(lines)
-MAX_QTY = 9
-def buy(uid, iid: str, qty: int = 1) -> str:
-    """خرید ×۱ یا ×۵ — عمده ۱۰٪ تخفیف، سقف ۹ عدد از هر تجهیز."""
+
+
+MAX_QTY = 99
+
+
+def buy(uid: int, iid: str, qty: int = 1) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
+        return "⚠️ اول «شروع»"
     it = countries.ITEMS.get(iid)
     if not it or iid not in countries.COUNTRIES[p["country"]]["items"]:
-        return "‌ این تجهیز در زرادخانه‌ی کشورت نیست."
-    # ⚡ برق ضعیف → خرید تجهیزات سنگین ممنوع (زیرساخت جنگی)
+        return "⚠️ این جنگ‌افزار در زرادخانه رسمی کشور شما موجود نیست."
+        
     from game import infra as _if
-    if not _if.power_ok(p["country"]) and it[5] >= 3000:
-        return ("⚡ شبکه برق کشورت آسیب‌دیده — خرید تجهیزات سنگین ممکن نیست.\n"
-                "‌ نظامی → ‌ زیرساخت کشور → تعمیر شبکه برق")
+    if not _if.power_ok(p["country"]) and it[5] >= 4000:
+        return "⚡ شبکه برق کشورتان آسیب‌دیده است — خرید تجهیزات سنگین ممنوع است.\n(برای رفع: منوی نظامی ➔ تعمیر زیرساخت)"
+        
     qty = max(1, min(5, int(qty)))
     deal = iid in economy.daily_deals(p["country"])
     if qty >= 5:
         qty = 5
-        cost = economy.real_price(it[5]) * 5 * 0.9     # عمده: ۱۰٪ تخفیف
+        cost = int(economy.real_price(it[5]) * 5 * 0.90)  # تخفیف خرید عمده
     else:
-        cost = economy.real_price(it[5])
-    cost = int(cost)
-    if deal:                                           # ‌ تخفیف روزانه: ۲۰٪
+        cost = int(economy.real_price(it[5]))
+        
+    if deal:
         cost = economy.deal_price(cost)
+        
     row = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
     have = row["qty"] if row else 0
     if have + qty > MAX_QTY:
-        return f"‌ سقف نگهداری {texts.fa(MAX_QTY)} عدد است — داری: {texts.fa(have)}"
+        return f"⚠️ سقف نگهداری این تجهیز {texts.fa(MAX_QTY)} عدد است (موجودی فعلی: {texts.fa(have)})."
+        
     if p["money"] < cost:
-        return (f"‌ پول کم داری — لازم: {texts.money(p['country'], cost)} · "
-                f"داری: {texts.money(p['country'], p['money'])}")
+        return f"⚠️ بودجه ناکافی! قیمت: {texts.money(p['country'], cost)} (موجودی شما: {texts.money(p['country'], p['money'])})"
+        
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
-    db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,?,100) "
-          "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+?", (uid, iid, qty, qty))
+    db.ex("""
+    INSERT INTO inventory(uid, iid, qty, dur)
+    VALUES(?, ?, ?, 100)
+    ON CONFLICT(uid, iid) DO UPDATE SET qty=qty+?, dur=100
+    """, (uid, iid, qty, qty))
+    
     from game import quests
     quests.on_event(uid, "خرید")
     t = texts
-    return (f"‌ <b>{it[0]}</b> {it[1]} ×{t.fa(qty)} خریداری شد — "
-            f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪\n"
-            f"‌ باقی خزانه: {t.money(p['country'], p['money'] - cost)}")
-def black_sample(uid) -> list:
-    """نمونه‌ی ساعتی بازار سیاه — همین لیست در متن و دکمه‌ها."""
+    return f"""✅ <b>خرید موفقیت‌آمیز از زرادخانه</b>
+{texts.FULL}
+📦 تجهیز: <b>{it[0]}</b> {it[1]} (تعداد: <b>{t.fa(qty)}</b>)
+📈 موجودی جدید: <b>{t.fa(have + qty)} عدد</b> با دوام ۱۰۰٪
+💵 مبلغ پرداختی: <b>{t.money(p['country'], cost)}</b>
+💰 باقی‌مانده خزانه: <b>{t.money(p['country'], p['money'] - cost)}</b>"""
+
+
+def black_sample(uid: int) -> list:
     p = state.active(uid)
     if not p:
         return []
     import random as _r
-    _r.seed(db.now() // 3600 + uid)      # هر ساعت تغییر
-    foreign = [iid for iid, it in countries.ITEMS.items()
-               if it[2] != p["country"]]
+    _r.seed(db.now() // 3600 + uid)
+    foreign = [iid for iid, it in countries.ITEMS.items() if it[2] != p["country"]]
     return _r.sample(foreign, k=min(8, len(foreign)))
-def blackmarket(uid) -> str:
-    """بازار سیاه — تجهیزات کشورهای دیگر با قیمت ۱.۷ برابر."""
+
+
+def blackmarket(uid: int) -> str:
     from game import economy
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
-    lines = [texts.hdr("بازار سیاه", "☠"), "قیمت ×۱.۷ — قاچاق است، رسمی نیست!", ""]
+        return "⚠️ اول «شروع»"
+    lines = [
+        texts.hdr("بازار سیاه تسلیحات بین‌الملل", "☠️"),
+        "⚠️ خرید تسلیحات خارجی قاچاق با ضریب قیمت ۱.۶ برابر رسمی:",
+        ""
+    ]
     for iid in black_sample(uid):
         it = countries.ITEMS[iid]
-        price = int(economy.real_price(it[5]) * 1.7)
-        c = countries.COUNTRIES[it[2]]
-        own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = "‌ از قبل داری" if own else f"‌ {texts.money(p['country'], price)}"
-        lines.append(f"{it[1]} {it[0]} ({c['flag']}) — {mark}")
-    lines += ["", "‌ خرید با دکمه‌های زیر — هر ساعت لیست عوض می‌شود."]
+        price = int(economy.real_price(it[5]) * 1.6)
+        c = countries.COUNTRIES.get(it[2], {})
+        own = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+        mark = f"📦 موجودی: {texts.fa(own['qty'])}" if own else f"💵 {texts.money(p['country'], price)}"
+        lines.append(f"{it[1]} <b>{it[0]}</b> ({c.get('flag','')}) — {mark}")
+    lines += ["", "🛒 <i>لیست بازار سیاه هر ساعت تغییر می‌کند.</i>"]
     return "\n".join(lines)
-def buy_black(uid, iid: str) -> str:
+
+
+def buy_black(uid: int, iid: str) -> str:
     from game import economy
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
+        return "⚠️ اول «شروع»"
     it = countries.ITEMS.get(iid)
     if not it or it[2] == p["country"]:
-        return "‌ این تجهیز در بازار سیاه نیست (یا مال کشور خودت است — زرادخانه)"
-    if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
-        return "‌ از قبل داری."
-    price = int(economy.real_price(it[5]) * 1.7)
+        return "⚠️ این تجهیز متعلق به کشور خودتان است — از زرادخانه تهیه کنید."
+    price = int(economy.real_price(it[5]) * 1.6)
     if p["money"] < price:
-        return (f"‌ پول کم — لازم: {texts.money(p['country'], price)} · "
-                f"داری: {texts.money(p['country'], p['money'])}")
+        return f"⚠️ بودجه ناکافی! قیمت بازار سیاه: {texts.money(p['country'], price)} (موجودی: {texts.money(p['country'], p['money'])})"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
-    db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
-    return f"☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
-def item_level(uid, iid: str) -> int:
+    db.ex("""
+    INSERT INTO inventory(uid, iid, qty, dur)
+    VALUES(?, ?, 1, 100)
+    ON CONFLICT(uid, iid) DO UPDATE SET qty=qty+1, dur=100
+    """, (uid, iid))
+    return f"☠️ جنگ‌افزار <b>{it[0]}</b> {it[1]} از بازار سیاه قاچاق و به زرادخانه شما افزوده شد!"
+
+
+def item_level(uid: int, iid: str) -> int:
     return int(db.kv_get(f"itlvl:{uid}:{iid}", "1"))
-def _lvl_mult(uid, iid: str) -> int:
-    """ضریب قدرت ارتقا — هر سطح +۲۵٪: سطح ۱=۱۰۰٪ · ۲=۱۲۵٪ · ۳=۱۵۰٪."""
-    return 100 + 25 * (item_level(uid, iid) - 1)
-def upgrade(uid, iid: str) -> str:
-    """ارتقای تجهیز — ۳ سطح، هر سطح +۲۵٪ قدرت."""
+
+
+def upgrade(uid: int, iid: str) -> str:
     from game import economy
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
+        return "⚠️ اول «شروع»"
     it = countries.ITEMS.get(iid)
     if not it or not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
-        return "‌ این تجهیز را نداری."
+        return "⚠️ این تجهیز را در زرادخانه خود ندارید."
     lvl = item_level(uid, iid)
     if lvl >= 3:
-        return "‌ تجهیز در حداکثر سطح (۳) است."
-    cost = int(economy.real_price(it[5]) * 0.6 * lvl)
+        return "🌟 این جنگ‌افزار در بالاترین سطح ارتقای فناوری (سطح ۳) قرار دارد."
+    cost = int(economy.real_price(it[5]) * 0.5 * lvl)
     if p["money"] < cost:
-        return (f"‌ ارتقا {texts.money(p['country'], cost)} می‌ارزد — "
-                f"داری: {texts.money(p['country'], p['money'])}")
+        return f"⚠️ هزینه ارتقا: {texts.money(p['country'], cost)} (موجودی: {texts.money(p['country'], p['money'])})"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
     db.kv_set(f"itlvl:{uid}:{iid}", str(lvl + 1))
-    t = texts
-    return "\n".join([
-        t.hdr("ارتقای تجهیز", "⬆‌"),
-        t.row("تجهیز", f"{it[1]} {it[0]}"),
-        t.row("سطح جدید", f"{t.fa(lvl + 1)} از ۳"),
-        t.row("قدرت", f"+{t.fa(25 * lvl)}٪"),
-        t.row("هزینه", f"‌ {t.money(p['country'], cost)}")])
-def repair(uid) -> str:
-    """تعمیر همه‌ی تجهیزات خراب — هزینه‌ی واقعی."""
+    return f"🚀 <b>ارتقای فناوری نظامی!</b>\nجنگ‌افزار <b>{it[0]}</b> به سطح <b>{texts.fa(lvl + 1)}</b> ارتقا یافت (+۲۵٪ قدرت تخریب مضاعف)."
+
+
+def repair(uid: int) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
+        return "⚠️ اول «شروع»"
     from game import economy
-    rows = db.q("SELECT i.iid, i.dur FROM inventory i WHERE i.uid=? AND i.dur<100", (uid,))
+    rows = db.q("SELECT i.iid, i.dur FROM inventory i WHERE i.uid=? AND i.dur < 100", (uid,))
     if not rows:
-        return "‌ همه‌ی تجهیزات سالم‌اند."
+        return "🛡️ تمامی تسلیحات شما با دوام ۱۰۰٪ کاملاً سالم و آماده رزم هستند."
     total, fixed = 0, 0
     for r in rows:
         it = countries.ITEMS.get(r["iid"])
         if not it:
             continue
-        # هزینه‌ی تعمیر متناسب با قیمت واقعی تجهیز
-        cost = max(10, economy.real_price(it[5]) * (100 - r["dur"]) // 100)
+        cost = max(15, economy.real_price(it[5]) * (100 - r["dur"]) // 200)
         if p["money"] < total + cost:
             break
         total += cost
         fixed += 1
         db.ex("UPDATE inventory SET dur=100 WHERE uid=? AND iid=?", (uid, r["iid"]))
     if total == 0:
-        return "‌ پول تعمیر کافی نیست — جیره‌ی روزانه‌ات را بگیر (منو)."
+        return "⚠️ بودجه کافی برای تعمیر تسلیحات ندارید."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (total, uid))
     t = texts
-    return "\n".join([
-        t.hdr("تعمیرگاه", "‌"),
-        t.row("تجهیزات تعمیرشده", fixed),
-        t.row("هزینه", f"‌ {t.money(p['country'], total)}"),
-        "", "‌ همه‌ی آن‌ها با دوام ۱۰۰٪ برگشتند."])
-def loadout(uid):
-    """بهترین تجهیز تهاجمی + دفاعی بازیکن → (atk_item, def_item, atk, guard, a_iid, d_iid)."""
-    rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=? AND n.dur>10", (uid,))
-    if not rows:
-        return None, None, 0, 0, None, None
-    best_a = max(rows, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
-                 * _lvl_mult(uid, r["iid"]) // 100)
-    best_d = max(rows, key=lambda r: countries.ITEMS[r["iid"]][4] * r["dur"] // 100
-                 * _lvl_mult(uid, r["iid"]) // 100)
-    a = countries.ITEMS[best_a["iid"]]
-    d = countries.ITEMS[best_d["iid"]]
-    return a, d, (a[3] * best_a["dur"] // 100) * _lvl_mult(uid, best_a["iid"]) // 100, \
-        (d[4] * best_d["dur"] // 100) * _lvl_mult(uid, best_d["iid"]) // 100, \
-        best_a["iid"], best_d["iid"]
-# ═══════════ رزم ═══════════
-ENEMIES = [("گروه شبه‌نظامی", 70, 12), ("گروه شناسایی دشمن", 105, 16),
-           ("کاروان زرهی", 160, 23), ("پایگاه مرزی", 230, 30),
-           ("نیروی ویژه دشمن", 320, 39), ("تکاوران گارد ویژه", 410, 48),
-           ("لشکر مکانیزه", 530, 58), ("ستاد فرماندهی دشمن", 690, 69)]
-def battle(uid, tier: int = None) -> str:
-    """نبرد خودکار با گزارش کوتاه — تجهیزات واقعی دوام می‌بازند."""
+    return f"""🔧 <b>عملیات اورهال و تعمیرات زرادخانه</b>
+{texts.FULL}
+✅ تعداد <b>{t.fa(fixed)} جنگ‌افزار</b> بازسازی و با دوام ۱۰۰٪ آماده نبرد شدند.
+💵 هزینه اورهال: <b>{t.money(p['country'], total)}</b>"""
+
+
+ENEMIES = [
+    ("جوخه تروریستی داعش", "تکفیری", 120, 35, 15, 0),
+    ("نیروهای مزدور بلک‌واتر", "مزدور", 180, 50, 25, 1),
+    ("لشکر کماندویی متخاصم", "تکاور", 260, 70, 40, 2),
+    ("گردان زرهی متجاوز", "زرهی سنگین", 350, 95, 60, 3),
+]
+
+
+def battle(uid: int) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
-    if not p["branch"]:
-        return "‌ اول عضو شاخه شو — منو → عضویت نظامی"
-    if db.now() - int(db.kv_get(f"battle:{uid}", "0")) < 20:
-        return "‌ ۲۰ ثانیه بین نبردها صبر کن."
-    db.kv_set(f"battle:{uid}", str(db.now()))
-    tier = tier if tier is not None else random.randint(0, min(4, p["level"]))
-    name, ehp, eatk = ENEMIES[tier]
-    a, d, atk, guard, a_iid, d_iid = loadout(uid)
-    wpn = a[0] if a else "تفنگ سبک"
-    # ‌ تخصص کشور در رزم
-    mspec, mpct, mname = countries.spec_of(p["country"])
-    spec_mult = 1 + mpct / 200          # نصف اثر در رزم
+        return "⚠️ اول «شروع»"
+    if p["hp"] < 25:
+        return f"❤️ <b>سلامت شما ناکافی است ({texts.fa(p['hp'])} HP)!</b>\nابتدا از بخش استراحت سلامتی خود را بازیابی کنید."
+    tier = min(len(ENEMIES) - 1, p["level"] // 3)
+    name, mname, ehp, eatk, eguard, t_idx = ENEMIES[tier]
+    a_it, d_it, atk, guard, a_iid, d_iid = loadout(uid)
     log = []
-    turn = 0
-    while turn < 14 and ehp > 0 and p["hp"] > 0:
-        turn += 1
-        dmg = max(4, int((atk + 10 + p["level"] * 3) * spec_mult
-                         * random.uniform(0.7, 1.3)))
-        crit = random.random() < 0.15   # ‌ شلیک مرگبار
-        if crit:
-            dmg *= 2
+    rounds = random.randint(2, 4)
+    for _ in range(rounds):
+        dmg = max(15, int(atk * random.uniform(0.7, 1.2)) - eguard // 2)
         ehp -= dmg
-        log.append(f"{'‌ مرگبار! ' if crit else '⚔‌ '}{wpn} → −{texts.fa(dmg)}")
+        log.append(f"⚔️ شلیک به {name} ➔ <b>{texts.fa(dmg)} آسیب</b>")
         if ehp <= 0:
             break
-        edmg = max(3, int(eatk * random.uniform(0.6, 1.1)) - guard // 2)
-        db.ex("UPDATE users SET hp=MAX(0,hp-?) WHERE uid=?", (edmg, uid))
+        edmg = max(10, int(eatk * random.uniform(0.5, 1.0)) - guard // 3)
+        db.ex("UPDATE users SET hp=MAX(0, hp-?) WHERE uid=?", (edmg, uid))
         p = state.active(uid)
-        log.append(f"‌ ضدحمله → −{texts.fa(edmg)}")
-    # فرسایش دوام تجهیزات استفاده‌شده — سلاح و سپر، هر دو
+        log.append(f"🛡️ ضدحمله دشمن ➔ <b>−{texts.fa(edmg)} HP</b>")
+    
     for iid in (a_iid, d_iid):
         if iid:
-            db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
-                  (random.randint(4, 10), uid, iid))
+            db.ex("UPDATE inventory SET dur=MAX(5, dur - ?) WHERE uid=? AND iid=?", (random.randint(2, 5), uid, iid))
+            
     t = texts
     if ehp <= 0:
-        loot = (tier + 1) * 160
-        xp = 60 + tier * 40
-        db.ex("UPDATE users SET money=money+?, kills=kills+1, hp=MAX(20,hp) WHERE uid=?",
-              (loot, uid))
+        loot = (tier + 1) * 350
+        xp = 80 + tier * 50
+        db.ex("UPDATE users SET money=money+?, kills=kills+1, hp=MAX(20, hp) WHERE uid=?", (loot, uid))
         state.gain_xp(uid, xp)
         from game import quests
         quests.on_event(uid, "رزم")
         quests.on_event(uid, "پیروزی")
         return "\n".join([
-            t.hdr("پیروزی در رزم", "‌"),
-            t.row("دشمن", name),
-            t.row("تخصص", f"‌ {mname}"), "",
-            *log[:6], "",
-            t.row("غنیمت", f"‌ {t.money(p['country'], loot)} · ‌ {t.fa(xp)} XP"),
-            t.row("جان", f"❤‌ {p['hp']}/{p['max_hp']}")])
-    db.ex("UPDATE users SET hp=MAX(10,hp) WHERE uid=?", (uid,))
+            t.hdr(f"پیروزی در رزم انفرادی — {name}", "🎖️"),
+            t.row("نوع هدف", mname),
+            "",
+            *log[:6],
+            "",
+            t.row("غنیمت نبرد", f"💵 {t.money(p['country'], loot)} + ⭐ {t.fa(xp)} XP"),
+            t.row("سلامت فعلی", f"❤️ {t.fa(p['hp'])} / {t.fa(p['max_hp'])} HP"),
+        ])
+    db.ex("UPDATE users SET hp=MAX(10, hp) WHERE uid=?", (uid,))
     return "\n".join([
-        t.hdr("عقب‌نشینی", "‌"),
-        t.row("دشمن", name), "",
-        *log[:6], "",
-        "‌ جان کم آمد — از منو: ‌ استراحت یا ‌ تعمیر."])
-def rest(uid) -> str:
+        t.hdr(f"عقب‌نشینی تاکتیکی از نبرد با {name}", "⚠️"),
+        "",
+        *log[:6],
+        "",
+        "💡 <i>سلامت شما کاهش یافت — جهت درمان از بخش «استراحت» استفاده کنید.</i>"
+    ])
+
+
+def rest(uid: int) -> str:
     p = state.active(uid)
     if not p:
-        return "‌ اول «شروع»"
-    if db.now() - int(db.kv_get(f"rest:{uid}", "0")) < 120:
-        return "‌ استراحت داده شد — ۲ دقیقه صبر کن."
-    cost = 100                                   # سخت‌تر — درمان دیگر رایگان نیست
+        return "⚠️ اول «شروع»"
+    last_rest = int(db.kv_get(f"rest:{uid}", "0") or 0)
+    if db.now() - last_rest < 60:
+        return "⏳ خدمات درمانی انجام شده است — ۱ دقیقه تا درخواست بعدی."
+    cost = 150
     if p["money"] < cost:
-        return f"‌ درمان {texts.money(p['country'], cost)} می‌ارزد — جیره بگیر یا بجنگ."
+        return f"⚠️ بودجه ناکافی! هزینه خدمات درمانی {texts.money(p['country'], cost)} است."
     db.kv_set(f"rest:{uid}", str(db.now()))
     db.ex("UPDATE users SET hp=max_hp, money=money-? WHERE uid=?", (cost, uid))
-    return (f"‌ جان کامل شد: ❤‌ {texts.fa(p['max_hp'])}/{texts.fa(p['max_hp'])}\n"
-            f"هزینه: {texts.money(p['country'], cost)}")
+    return f"❤️ <b>بهداری ارتش — سلامت کامل بازیابی شد!</b>\nوضعیت: {texts.fa(p['max_hp'])} / {texts.fa(p['max_hp'])} HP\n💵 هزینه درمان: {texts.money(p['country'], cost)}"
+
+
+def loadout(uid: int):
+    rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=? AND n.dur > 5", (uid,))
+    if not rows:
+        p = state.active(uid)
+        cid = p["country"] if p else "ir"
+        c_items = countries.COUNTRIES.get(cid, {}).get("items", [])
+        if c_items:
+            first_iid = c_items[0]
+            it = countries.ITEMS.get(first_iid)
+            if it:
+                return it, it, it[3], it[4], first_iid, first_iid
+        return None, None, 50, 50, None, None
+    best_a = max(rows, key=lambda r: countries.ITEMS.get(r["iid"], [0, "", "", 10, 10, 100])[3] * r["dur"] // 100)
+    best_d = max(rows, key=lambda r: countries.ITEMS.get(r["iid"], [0, "", "", 10, 10, 100])[4] * r["dur"] // 100)
+    it_a = countries.ITEMS.get(best_a["iid"])
+    it_d = countries.ITEMS.get(best_d["iid"])
+    atk_val = it_a[3] if it_a else 50
+    def_val = it_d[4] if it_d else 50
+    return it_a, it_d, atk_val, def_val, best_a["iid"], best_d["iid"]
